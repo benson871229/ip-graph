@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>IP 關聯圖 — 丟 pcap 自動生圖</title>
+<title>IP 關聯圖 — N 跳關聯分析</title>
 <style>
   :root{
     --bg:#0d1522; --panel:#131d2e; --panel2:#1a2740; --line:#2a3a56;
     --text:#cdd8e8; --muted:#7f8fa6;
     --focus:#f0b24a; --internal:#46b7c9; --external:#e46f56; --other:#8a93a6;
-    --rogue:#d76ad7; --edge:#38486a; --edgehi:#86b4e6;
+    --rogue:#d76ad7; --threat:#ff4d4d; --edge:#38486a; --edgehi:#86b4e6;
     --mono:ui-monospace,"Cascadia Code","Consolas","SF Mono",Menlo,monospace;
     --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans TC",sans-serif;
   }
@@ -17,9 +17,10 @@
   html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
     font-family:var(--sans);overflow:hidden}
   #app{display:flex;height:100%}
+
   #panel{width:352px;flex:0 0 352px;background:var(--panel);
     border-right:1px solid var(--line);display:flex;flex-direction:column;height:100%}
-  #panel header{padding:15px 18px 11px;border-bottom:1px solid var(--line)}
+  #panel header{padding:14px 18px 11px;border-bottom:1px solid var(--line)}
   #panel header h1{margin:0;font-size:15px;letter-spacing:.02em;font-weight:600}
   #panel header .sub{margin-top:3px;font-size:11.5px;color:var(--muted);font-family:var(--mono)}
   .body{padding:14px 18px;overflow-y:auto;flex:1 1 auto}
@@ -27,18 +28,18 @@
   .grp>label{display:block;font-size:11px;text-transform:uppercase;
     letter-spacing:.08em;color:var(--muted);margin-bottom:6px}
 
-  /* 拖放區 */
-  #drop{border:1.5px dashed var(--line);border-radius:8px;padding:18px 14px;
+  #drop{border:1.5px dashed var(--line);border-radius:8px;padding:16px 14px;
     text-align:center;cursor:pointer;transition:border-color .15s,background .15s;
     color:var(--muted);font-size:12.5px;line-height:1.6}
   #drop:hover,#drop.over{border-color:var(--internal);background:#0f1a2b;color:var(--text)}
   #drop b{color:var(--internal)}
   #drop .big{font-size:13px;color:var(--text);margin-bottom:3px}
+  #drop .fmt{font-size:10.5px;font-family:var(--mono);margin-top:5px;opacity:.75}
 
   textarea{width:100%;resize:vertical;background:var(--bg);color:var(--text);
     border:1px solid var(--line);border-radius:6px;padding:9px 10px;
     font-family:var(--mono);font-size:12px;line-height:1.5}
-  #data{height:96px} #assets{height:70px}
+  #data{height:92px} #assets{height:66px} #threat{height:56px}
   textarea:focus,input:focus,select:focus{outline:none;border-color:var(--internal)}
   input[type=text],input[type=number]{width:100%;background:var(--bg);color:var(--text);
     border:1px solid var(--line);border-radius:6px;padding:8px 10px;
@@ -46,38 +47,47 @@
   select{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--line);
     border-radius:6px;padding:8px 10px;font-size:13px}
   .row{display:flex;gap:8px}.row>*{flex:1}
-  .check{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);
-    margin-top:8px;cursor:pointer}
+
+  /* hop 控制 */
+  .hopbox{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px}
+  .hopbox .top{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px}
+  .hopbox .top span{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+  .hopbox .val{font-family:var(--mono);font-size:15px;color:var(--focus);font-weight:600}
+  input[type=range]{width:100%;accent-color:var(--focus);height:20px;cursor:pointer}
+  .hopscale{display:flex;justify-content:space-between;font-family:var(--mono);
+    font-size:10px;color:var(--muted);margin-top:2px}
+  .hopnote{font-size:11px;color:var(--muted);line-height:1.5;margin-top:8px;font-family:var(--mono)}
+
+  .check{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text);margin-top:8px;cursor:pointer}
   .check input{accent-color:var(--internal);width:15px;height:15px}
-  details{margin-bottom:15px;border:1px solid var(--line);border-radius:6px}
-  details>summary{cursor:pointer;padding:8px 12px;font-size:12px;color:var(--muted);
-    user-select:none;list-style:none}
+  details{margin-bottom:14px;border:1px solid var(--line);border-radius:6px}
+  details>summary{cursor:pointer;padding:8px 12px;font-size:12px;color:var(--muted);user-select:none;list-style:none}
   details>summary::-webkit-details-marker{display:none}
   details>summary::before{content:"▸ ";color:var(--internal)}
   details[open]>summary::before{content:"▾ "}
   details .inner{padding:0 12px 12px}
+  .tinynote{font-size:10.5px;color:var(--muted);margin:8px 0;line-height:1.5;font-family:var(--mono)}
   .btns{display:flex;gap:8px;margin-top:2px}
   button{cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--text);
     border-radius:6px;padding:9px 12px;font-size:12.5px;font-family:var(--sans);
     transition:border-color .15s,background .15s}
   button:hover{border-color:var(--internal)}
-  button.primary{background:var(--internal);border-color:var(--internal);color:#06222a;
-    font-weight:600;flex:1.4}
+  button.primary{background:var(--internal);border-color:var(--internal);color:#06222a;font-weight:600;flex:1.4}
   button.primary:hover{filter:brightness(1.08)}
-  #status{font-size:11.5px;color:var(--muted);font-family:var(--mono);margin-top:10px;
-    line-height:1.5;min-height:16px}
+  #status{font-size:11.5px;color:var(--muted);font-family:var(--mono);margin-top:10px;line-height:1.5;min-height:16px}
   #status.err{color:var(--external)}
 
-  .legend{border-top:1px solid var(--line);padding:11px 18px;font-size:11.5px}
-  .legend .item{display:flex;align-items:center;gap:8px;margin:5px 0;color:var(--muted)}
+  .legend{border-top:1px solid var(--line);padding:10px 18px;font-size:11.5px}
+  .legend .item{display:flex;align-items:center;gap:8px;margin:4px 0;color:var(--muted)}
   .dot{width:11px;height:11px;border-radius:50%;flex:0 0 11px}
   .dot.ring{background:transparent;border:2px dashed var(--rogue)}
-  .stats{border-top:1px solid var(--line);padding:11px 18px;font-size:11.5px;
-    color:var(--muted);font-family:var(--mono);line-height:1.7}
+  .stats{border-top:1px solid var(--line);padding:10px 18px;font-size:11.5px;
+    color:var(--muted);font-family:var(--mono);line-height:1.7;max-height:190px;overflow-y:auto}
   .stats b{color:var(--text);font-weight:600}
+  .stats .hoprow{color:var(--text)}
 
   #stage{flex:1 1 auto;position:relative;height:100%}
-  svg{width:100%;height:100%;display:block;cursor:grab}
+  svg{width:100%;height:100%;display:block;cursor:grab;touch-action:none}
   svg.grabbing{cursor:grabbing}
   .edge{fill:none;stroke:var(--edge);stroke-opacity:.7}
   .edge.hi{stroke:var(--edgehi);stroke-opacity:1}
@@ -85,13 +95,15 @@
   .node circle.rogue{stroke:var(--rogue);stroke-width:2.5;stroke-dasharray:3 2}
   .node text{font-family:var(--mono);font-size:11px;fill:var(--text);paint-order:stroke;
     stroke:#0d1522;stroke-width:3px;pointer-events:none;user-select:none}
-  .ring2{fill:none;stroke:var(--focus);stroke-opacity:.14}
-  #tip{position:absolute;pointer-events:none;background:#0b1220f2;border:1px solid var(--line);
+  .hopring{fill:none;stroke:var(--focus);stroke-opacity:.13;stroke-dasharray:4 6}
+  .hoplabel{font-family:var(--mono);font-size:10px;fill:var(--focus);fill-opacity:.5;
+    pointer-events:none;user-select:none}
+  #tip{position:absolute;pointer-events:none;background:#0b1220f5;border:1px solid var(--line);
     border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:12px;color:var(--text);
     max-width:300px;line-height:1.6;opacity:0;transition:opacity .1s;z-index:5;box-shadow:0 6px 20px #0008}
   #tip .t{color:var(--focus)}
   #empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-    color:var(--muted);font-size:13px;text-align:center;padding:40px;line-height:1.7;pointer-events:none}
+    color:var(--muted);font-size:13px;text-align:center;padding:40px;line-height:1.8;pointer-events:none}
   #toolbar{position:absolute;top:12px;right:12px;display:flex;gap:6px;z-index:4}
   #toolbar button{padding:6px 10px;font-size:11.5px}
   @media (prefers-reduced-motion: reduce){svg *{transition:none!important}}
@@ -102,21 +114,32 @@
   <div id="panel">
     <header>
       <h1>IP 關聯圖</h1>
-      <div class="sub">drop a pcap → auto graph</div>
+      <div class="sub">N-hop relationship analysis</div>
     </header>
+
     <div class="body">
       <div class="grp">
-        <label>1 · 封包檔 (pcap / pcapng)</label>
+        <label>1 · 資料來源</label>
         <div id="drop">
-          <div class="big">拖放 pcap 到這裡</div>
-          或 <b>點此選擇檔案</b> · 從 Security Onion 下載後直接丟進來
+          <div class="big">拖放檔案到這裡</div>
+          或 <b>點此選擇</b>
+          <div class="fmt">pcap · pcapng · Zeek conn.log · CSV · ES JSON</div>
         </div>
-        <input type="file" id="file" accept=".pcap,.pcapng,.cap" style="display:none">
+        <input type="file" id="file" accept=".pcap,.pcapng,.cap,.log,.csv,.tsv,.txt,.json" style="display:none">
       </div>
 
       <div class="grp">
-        <label>2 · 聚焦 IP (置中放射)</label>
-        <input id="focus" type="text" placeholder="例如 10.20.0.30，留空畫整張圖">
+        <label>2 · 聚焦 IP</label>
+        <input id="focus" type="text" placeholder="例如 10.20.0.5">
+      </div>
+
+      <div class="grp">
+        <div class="hopbox">
+          <div class="top"><span>3 · 關聯深度 (hop)</span><span class="val" id="hopVal">1 跳</span></div>
+          <input type="range" id="hop" min="0" max="3" step="1" value="1">
+          <div class="hopscale"><span>全部</span><span>1 跳</span><span>2 跳</span><span>3 跳</span></div>
+          <div class="hopnote" id="hopNote">只顯示與聚焦 IP 直接通訊的對象。</div>
+        </div>
       </div>
 
       <div class="grp row">
@@ -125,33 +148,36 @@
           <select id="sizeBy"><option value="traffic">總流量</option><option value="degree">連線數</option></select>
         </div>
         <div>
-          <label>範圍</label>
-          <select id="scope"><option value="all">全部</option><option value="1hop">只看聚焦鄰居</option></select>
+          <label>最小權重</label>
+          <input id="thresh" type="number" min="0" value="0" placeholder="0">
         </div>
       </div>
-      <div class="grp">
-        <label>過濾雜訊：最小權重 (位元組/次數)</label>
-        <input id="thresh" type="number" min="0" value="0" placeholder="0 = 不過濾">
-      </div>
       <label class="check"><input type="checkbox" id="labels" checked> 顯示標籤</label>
+      <label class="check"><input type="checkbox" id="rings" checked> 顯示 hop 分層環</label>
 
-      <details style="margin-top:15px">
-        <summary>資產盤點表對應 (選填)</summary>
+      <details style="margin-top:14px">
+        <summary>資產盤點表 (選填)</summary>
         <div class="inner">
-          <div style="font-size:11px;color:var(--muted);margin:8px 0;line-height:1.5;font-family:var(--mono)">
-            每列 ip,名稱,角色。節點會顯示名稱;不在清單裡的 IP 會被虛線圈標記(疑似未列管)。</div>
-          <textarea id="assets" spellcheck="false" placeholder="10.20.0.5,PACS-01,影像伺服器&#10;10.20.0.6,HL7-ENGINE,介接引擎"></textarea>
+          <div class="tinynote">每行 ip,名稱,角色。節點改顯示名稱；不在表內的 IP 會被虛線圈標記。</div>
+          <textarea id="assets" spellcheck="false" placeholder="10.20.0.5,PACS-01,影像伺服器"></textarea>
         </div>
       </details>
 
       <details>
-        <summary>改用貼上資料 (CSV) 而非封包檔</summary>
+        <summary>威脅情資 · 惡意 IP (選填)</summary>
         <div class="inner">
-          <div style="font-size:11px;color:var(--muted);margin:8px 0;line-height:1.5;font-family:var(--mono)">
-            每列 來源,目的,權重,標籤。可貼 SOC Hunt 或 Kibana 匯出的連線。</div>
+          <div class="tinynote">每行一個 IP，命中者標紅發光，相關連線變紅。</div>
+          <textarea id="threat" spellcheck="false" placeholder="45.140.17.3"></textarea>
+        </div>
+      </details>
+
+      <details>
+        <summary>改用貼上資料</summary>
+        <div class="inner">
+          <div class="tinynote">支援 來源,目的,權重,標籤 / Kibana CSV / Zeek conn.log / ES 聚合 JSON。</div>
           <textarea id="data" spellcheck="false" placeholder="10.20.0.30,10.20.0.5,1240,DICOM"></textarea>
           <div class="btns" style="margin-top:8px">
-            <button id="renderCsv">用 CSV 繪製</button>
+            <button id="renderPaste">用貼上資料繪製</button>
             <button id="sample">載入範例</button>
           </div>
         </div>
@@ -161,13 +187,13 @@
     </div>
 
     <div class="legend">
-      <div class="item"><span class="dot" style="background:var(--focus)"></span>聚焦 IP</div>
-      <div class="item"><span class="dot" style="background:var(--internal)"></span>內部 (RFC1918 私有)</div>
-      <div class="item"><span class="dot" style="background:var(--external)"></span>外部 (公有位址)</div>
-      <div class="item"><span class="dot" style="background:var(--other)"></span>其他 / IPv6</div>
-      <div class="item"><span class="dot ring"></span>不在資產表 (疑似未列管)</div>
+      <div class="item"><span class="dot" style="background:var(--focus)"></span>聚焦 IP (0 跳)</div>
+      <div class="item"><span class="dot" style="background:var(--internal)"></span>內部私有 IP</div>
+      <div class="item"><span class="dot" style="background:var(--external)"></span>外部公有 IP</div>
+      <div class="item"><span class="dot ring"></span>不在資產表</div>
+      <div class="item"><span class="dot" style="background:var(--threat)"></span>命中威脅情資</div>
     </div>
-    <div class="stats" id="stats">丟一個 pcap 進來就會自動生圖。</div>
+    <div class="stats" id="stats">拖入檔案後選聚焦 IP，再拉 hop 決定要看幾層關聯。</div>
   </div>
 
   <div id="stage">
@@ -175,8 +201,16 @@
       <button id="fit">重置視圖</button>
       <button id="dl">下載 SVG</button>
     </div>
-    <svg id="svg"><g id="viewport"></g></svg>
-    <div id="empty">把 Security Onion 下載的 pcap 拖進來,<br>或展開下方「改用貼上資料」按「載入範例」看效果。</div>
+    <svg id="svg">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7"
+                markerUnits="userSpaceOnUse" orient="auto">
+          <path d="M0,0 L10,5 L0,10 z" fill="context-stroke"></path>
+        </marker>
+      </defs>
+      <g id="viewport"></g>
+    </svg>
+    <div id="empty">拖入 pcap 或 Zeek conn.log,<br>輸入聚焦 IP,拉動 hop 看關聯層次。<br><br>或展開「改用貼上資料」按「載入範例」。</div>
     <div id="tip"></div>
   </div>
 </div>
@@ -189,20 +223,36 @@
   const NS="http://www.w3.org/2000/svg";
 
   const SAMPLE=
-`# 範例：醫護工作站 10.20.0.30 的連線
-10.20.0.30,10.20.0.5,1240,DICOM
-10.20.0.30,10.20.0.6,860,HL7
-10.20.0.30,10.20.0.1,300,DNS
-10.20.0.30,10.20.0.10,540,LDAP
-10.20.0.30,140.112.8.116,2100,HTTPS
-10.20.0.30,8.8.8.8,90,DNS
-10.20.0.5,10.20.0.30,3300,DICOM
-10.20.0.6,10.20.0.30,410,HL7`;
+`# 範例：聚焦 PACS(10.20.0.5) 可看出 1 跳/2 跳/3 跳的差別
+10.20.0.11,10.20.0.5,486000,DICOM
+10.20.0.12,10.20.0.5,512000,DICOM
+10.20.0.30,10.20.0.5,124000,DICOM
+10.20.0.5,10.20.0.30,398000,DICOM
+10.20.0.199,10.20.0.5,88000,DICOM
+10.20.0.30,10.20.0.6,42000,HL7
+10.20.0.30,10.20.0.10,9000,Kerberos
+10.20.0.6,10.20.0.20,31000,HL7
+10.20.0.10,10.20.0.1,4200,DNS
+10.20.0.20,10.20.0.41,15000,SQL
+10.20.0.1,8.8.8.8,1200,DNS
+10.20.0.199,45.140.17.3,150000,HTTPS
+10.20.0.31,10.20.0.6,15000,HL7
+10.20.0.31,140.82.0.5,54000,HTTPS`;
+  const SAMPLE_ASSETS=
+`10.20.0.5,PACS-01,影像伺服器
+10.20.0.6,HL7-ENGINE,介接引擎
+10.20.0.10,DC-01,網域控制站
+10.20.0.1,DNS-01,DNS
+10.20.0.11,CT-01,CT 造影
+10.20.0.12,MRI-01,MRI 造影
+10.20.0.20,LIS-01,檢驗系統
+10.20.0.30,WS-放射科,工作站
+10.20.0.31,WS-門診,工作站
+10.20.0.41,DB-01,資料庫`;
 
-  // ======================= 資料處理 =======================
+  // ===================== 基礎 =====================
   function ipClass(ip){
-    const m=/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(ip);
-    if(!m) return "other";
+    const m=/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(ip); if(!m) return "other";
     const a=+m[1],b=+m[2];
     if(a===10) return "internal";
     if(a===172&&b>=16&&b<=31) return "internal";
@@ -211,19 +261,21 @@
     return "external";
   }
   const COLOR={focus:"#f0b24a",internal:"#46b7c9",external:"#e46f56",other:"#8a93a6"};
+  const fmt=n=>{n=Math.round(n);return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g,",");};
+  const clsName=c=>({focus:"聚焦",internal:"內部",external:"外部",other:"其他"}[c]||c);
+  const esc=s=>String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
 
-  function splitLine(line){
-    const out=[];let cur="",q=false;
+  function splitLine(line){const out=[];let cur="",q=false;
     for(let i=0;i<line.length;i++){const ch=line[i];
       if(q){if(ch==='"'){if(line[i+1]==='"'){cur+='"';i++;}else q=false;}else cur+=ch;}
       else{if(ch==='"')q=true;else if(ch===","||ch==="\t"){out.push(cur);cur="";}else cur+=ch;}}
-    out.push(cur);return out.map(s=>s.trim());
-  }
+    out.push(cur);return out.map(s=>s.trim());}
+
+  // ===================== 輸入解析 =====================
   const colIdx=(header,names)=>{for(const n of names){const i=header.indexOf(n);if(i>=0)return i;}return -1;};
-  // 自動辨識 Kibana(CSV)、Zeek(#fields TSV)或純 來源,目的,權重,標籤
   function parseCSV(text){
     const all=text.split(/\r?\n/);
-    let zh=null;                                   // Zeek #fields 標頭
+    let zh=null;
     for(const l of all){ if(l.indexOf("#fields")===0){ zh=l.replace(/^#fields\s*/,"").split("\t").map(s=>s.trim().toLowerCase()); break; } }
     const rows=[];
     for(const raw of all){ const l=raw.trim(); if(!l||l[0]==="#") continue; rows.push(splitLine(l)); }
@@ -241,15 +293,46 @@
     for(let r=start;r<rows.length;r++){
       const p=rows[r];
       const src=(p[sI]||"").trim(), dst=(p[dI]||"").trim();
-      if(!src||!dst||!/[.:]/.test(src)||!/[.:]/.test(dst)) continue;   // 只收看起來像 IP 的
+      if(!src||!dst||!/[.:]/.test(src)||!/[.:]/.test(dst)) continue;
       let w=1;
       if(wI>=0&&p[wI]!=null&&p[wI]!==""){const n=parseFloat(String(p[wI]).replace(/[, ]/g,""));if(!isNaN(n))w=n;}
       if(wI2>=0&&p[wI2]!=null&&p[wI2]!==""){const n2=parseFloat(String(p[wI2]).replace(/[, ]/g,""));if(!isNaN(n2))w+=n2;}
       const label=(labI>=0&&p[labI]!=null)?String(p[labI]).trim():"";
-      edges.push({src,dst,w,label});
+      edges.push({src,dst,w,label:(label==="-"?"":label)});
     }
     return edges;
   }
+  function parseESJson(text){
+    const t=text.trim(); if(t[0]!=="{") return null;
+    let j; try{ j=JSON.parse(t); }catch(e){ return null; }
+    const aggs=j.aggregations||j.aggs; if(!aggs) return null;
+    const edges=[];
+    const ipLike=v=>typeof v==="string"&&/[.:]/.test(v);
+    const numSub=b=>{ for(const k in b){ const v=b[k]; if(v&&typeof v==="object"&&typeof v.value==="number") return v.value; } return null; };
+    (function walk(obj){
+      for(const k in obj){ const v=obj[k];
+        if(v&&typeof v==="object"){
+          if(Array.isArray(v.buckets)){
+            for(const b of v.buckets){
+              if(b.key&&typeof b.key==="object"){
+                const vals=Object.values(b.key).filter(ipLike);
+                if(vals.length>=2){ edges.push({src:String(vals[0]),dst:String(vals[1]),w:(numSub(b)||b.doc_count||1),label:""}); continue; }
+              }
+              if(ipLike(b.key)){
+                for(const kk in b){ const vv=b[kk];
+                  if(vv&&Array.isArray(vv.buckets)) for(const b2 of vv.buckets){
+                    if(ipLike(b2.key)) edges.push({src:String(b.key),dst:String(b2.key),w:(numSub(b2)||b2.doc_count||1),label:""});
+                  }
+                }
+              }
+            }
+          } else walk(v);
+        }
+      }
+    })(aggs);
+    return edges.length?edges:null;
+  }
+  const parseAny=text=>parseESJson(text)||parseCSV(text);
   function parseAssets(text){
     const m=new Map();
     for(const raw of text.split(/\r?\n/)){
@@ -261,38 +344,35 @@
     }
     return m;
   }
+  const parseThreat=text=>new Set(text.split(/\r?\n/)
+    .map(s=>s.trim().split(/[\s,]/)[0]).filter(x=>x&&x[0]!=="#"));
 
-  // ======================= pcap / pcapng 解析 =======================
+  // ===================== pcap / pcapng =====================
   const PORTSVC={104:"DICOM",2761:"DICOM",2762:"DICOM-TLS",11112:"DICOM",2575:"HL7",6661:"HL7",
     1883:"MQTT",8883:"MQTT-TLS",22:"SSH",23:"Telnet",25:"SMTP",53:"DNS",67:"DHCP",68:"DHCP",
     80:"HTTP",88:"Kerberos",110:"POP3",123:"NTP",135:"MS-RPC",139:"NetBIOS",143:"IMAP",161:"SNMP",
     389:"LDAP",443:"HTTPS",445:"SMB",636:"LDAPS",993:"IMAPS",1433:"MSSQL",3306:"MySQL",3389:"RDP",
     5432:"PostgreSQL",5900:"VNC",8080:"HTTP",8443:"HTTPS",20000:"DNP3",44818:"EtherNet/IP",47808:"BACnet"};
-  function serviceName(sp,dp){ return PORTSVC[dp]||PORTSVC[sp]||""; }
-
-  function ip4(dv,o){ return dv.getUint8(o)+"."+dv.getUint8(o+1)+"."+dv.getUint8(o+2)+"."+dv.getUint8(o+3); }
+  const serviceName=(sp,dp)=>PORTSVC[dp]||PORTSVC[sp]||"";
+  const ip4=(dv,o)=>dv.getUint8(o)+"."+dv.getUint8(o+1)+"."+dv.getUint8(o+2)+"."+dv.getUint8(o+3);
   function ip6(dv,o){
     const p=[]; for(let i=0;i<8;i++) p.push(dv.getUint16(o+i*2,false));
     let best=-1,bl=0,cur=-1,cl=0;
     for(let i=0;i<8;i++){ if(p[i]===0){ if(cur<0){cur=i;cl=1;}else cl++; if(cl>bl){bl=cl;best=cur;} } else {cur=-1;cl=0;} }
     const h=p.map(x=>x.toString(16));
-    if(bl>1){ return h.slice(0,best).join(":")+"::"+h.slice(best+bl).join(":"); }
-    return h.join(":");
+    return bl>1 ? h.slice(0,best).join(":")+"::"+h.slice(best+bl).join(":") : h.join(":");
   }
-
   function decodePacket(dv,off,len,linktype,orig,add){
     let etype=null,p=off,plen=len;
     if(linktype===1){
       if(len<14) return;
       etype=dv.getUint16(off+12,false); p=off+14; plen=len-14;
-      let guard=0;
-      while(etype===0x8100&&plen>=4&&guard++<4){ etype=dv.getUint16(p+2,false); p+=4; plen-=4; }
+      let g=0; while(etype===0x8100&&plen>=4&&g++<4){ etype=dv.getUint16(p+2,false); p+=4; plen-=4; }
     }else if(linktype===101||linktype===12||linktype===14){
       if(len<1) return; const v=dv.getUint8(off)>>4; etype=v===4?0x0800:(v===6?0x86dd:null);
     }else if(linktype===113){
       if(len<16) return; etype=dv.getUint16(off+14,false); p=off+16; plen=len-16;
     }else return;
-
     const end=off+len;
     if(etype===0x0800){
       if(plen<20) return;
@@ -309,10 +389,8 @@
       add(src,dst,orig||len,serviceName(sp,dp));
     }
   }
-
   function parsePcapClassic(dv,n,add){
-    const b0=dv.getUint8(0);
-    const le=(b0===0xd4)||(b0===0x4d);
+    const b0=dv.getUint8(0), le=(b0===0xd4)||(b0===0x4d);
     const net=dv.getUint32(20,le);
     let pos=24;
     while(pos+16<=n){
@@ -323,7 +401,7 @@
     }
   }
   function parsePcapng(dv,n,add){
-    const ifs=[]; let le=true, pos=0;
+    const ifs=[]; let le=true,pos=0;
     while(pos+8<=n){
       const b0=dv.getUint8(pos),b1=dv.getUint8(pos+1),b2=dv.getUint8(pos+2),b3=dv.getUint8(pos+3);
       if(b0===0x0a&&b1===0x0d&&b2===0x0d&&b3===0x0a){
@@ -334,23 +412,19 @@
       }
       const btype=dv.getUint32(pos,le), tot=dv.getUint32(pos+4,le);
       if(tot<12||pos+tot>n) break;
-      const bodyStart=pos+8;
-      if(btype===1){
-        const lt=dv.getUint16(bodyStart,le); ifs.push({lt});
-      }else if(btype===6){
-        const caplen=dv.getUint32(bodyStart+12,le), origlen=dv.getUint32(bodyStart+16,le);
-        const ifid=dv.getUint32(bodyStart,le);
+      const bs=pos+8;
+      if(btype===1){ ifs.push({lt:dv.getUint16(bs,le)}); }
+      else if(btype===6){
+        const ifid=dv.getUint32(bs,le), caplen=dv.getUint32(bs+12,le), origlen=dv.getUint32(bs+16,le);
         const lt=ifid<ifs.length?ifs[ifid].lt:1;
-        try{ decodePacket(dv,bodyStart+20,caplen,lt,origlen,add); }catch(e){}
+        try{ decodePacket(dv,bs+20,caplen,lt,origlen,add); }catch(e){}
       }else if(btype===3){
-        const origlen=dv.getUint32(bodyStart,le);
-        const lt=ifs.length?ifs[0].lt:1;
-        try{ decodePacket(dv,bodyStart+4,origlen,lt,origlen,add); }catch(e){}
+        const origlen=dv.getUint32(bs,le), lt=ifs.length?ifs[0].lt:1;
+        try{ decodePacket(dv,bs+4,origlen,lt,origlen,add); }catch(e){}
       }
       pos+=tot;
     }
   }
-
   function parsePcap(buf){
     const dv=new DataView(buf), n=buf.byteLength;
     if(n<4) throw new Error("檔案太小");
@@ -368,99 +442,145 @@
             (b0===0x4d&&b1===0x3c&&b2===0xb2&&b3===0xa1)||(b0===0xa1&&b1===0xb2&&b2===0x3c&&b3===0x4d))
       parsePcapClassic(dv,n,add);
     else throw new Error("不是 pcap 或 pcapng 檔");
-    const edges=[...agg.values()].map(o=>({src:o.src,dst:o.dst,w:o.w,label:[...o.svc].join(", "),pk:o.pk}));
-    return {edges,pkts};
+    return {edges:[...agg.values()].map(o=>({src:o.src,dst:o.dst,w:o.w,pk:o.pk,label:[...o.svc].join(", ")})),pkts};
   }
 
-  // ======================= 建圖 =======================
-  function buildGraph(rawEdges,focus,scope){
+  // ===================== 建圖 + N-hop =====================
+  function buildGraph(rawEdges){
     const emap=new Map();
     for(const e of rawEdges){
       const k=e.src+"\u0000"+e.dst;
       let o=emap.get(k);
       if(!o){o={src:e.src,dst:e.dst,w:0,pk:0,labels:new Set()};emap.set(k,o);}
-      o.w+=e.w; o.pk+=(e.pk||0); if(e.label) e.label.split(", ").forEach(l=>l&&o.labels.add(l));
+      o.w+=e.w; o.pk+=(e.pk||0);
+      if(e.label) String(e.label).split(", ").forEach(l=>l&&o.labels.add(l));
     }
-    let edges=[...emap.values()];
-    if(scope==="1hop"&&focus) edges=edges.filter(e=>e.src===focus||e.dst===focus);
+    return [...emap.values()];
+  }
+  // BFS：以無向鄰接計算每個 IP 距離聚焦 IP 幾跳
+  function hopFilter(edges,focus,maxHop){
+    if(!focus||!maxHop||maxHop<=0) return {edges,dist:null};
+    const adj=new Map();
+    const link=(a,b)=>{ if(!adj.has(a)) adj.set(a,new Set()); adj.get(a).add(b); };
+    for(const e of edges){ link(e.src,e.dst); link(e.dst,e.src); }
+    if(!adj.has(focus)) return {edges:[],dist:new Map()};
+    const dist=new Map([[focus,0]]);
+    let frontier=[focus];
+    for(let d=1;d<=maxHop;d++){
+      const next=[];
+      for(const ip of frontier){
+        const nb=adj.get(ip); if(!nb) continue;
+        for(const x of nb) if(!dist.has(x)){ dist.set(x,d); next.push(x); }
+      }
+      frontier=next; if(!frontier.length) break;
+    }
+    return {edges:edges.filter(e=>dist.has(e.src)&&dist.has(e.dst)),dist};
+  }
+  function nodesFromEdges(edges,focus,dist){
     const nmap=new Map();
-    const touch=ip=>{let n=nmap.get(ip);if(!n){n={ip,inW:0,outW:0,deg:0,cls:ipClass(ip)};nmap.set(ip,n);}return n;};
+    const touch=ip=>{let n=nmap.get(ip);if(!n){n={ip,inW:0,outW:0,deg:0,cls:ipClass(ip),hop:null};nmap.set(ip,n);}return n;};
     for(const e of edges){const s=touch(e.src),d=touch(e.dst);s.outW+=e.w;d.inW+=e.w;s.deg++;d.deg++;}
     const nodes=[...nmap.values()];
-    for(const n of nodes){n.total=n.inW+n.outW; if(focus&&n.ip===focus)n.cls="focus";}
-    return {nodes,edges};
+    for(const n of nodes){
+      n.total=n.inW+n.outW;
+      if(dist&&dist.has(n.ip)) n.hop=dist.get(n.ip);
+      if(focus&&n.ip===focus){ n.cls="focus"; n.hop=0; }
+    }
+    return nodes;
   }
-  function applyThreshold(g,th,focus){
-    if(!th||th<=0) return g;
-    g.edges=g.edges.filter(e=>e.w>=th);
-    const keep=new Set(); g.edges.forEach(e=>{keep.add(e.src);keep.add(e.dst);});
-    if(focus) keep.add(focus);
-    g.nodes=g.nodes.filter(n=>keep.has(n.ip));
-    return g;
-  }
-  function annotateAssets(nodes,amap,focus){
+  function applyThreshold(edges,th){ return (!th||th<=0)?edges:edges.filter(e=>e.w>=th); }
+  function annotate(nodes,amap,bad){
     const has=amap&&amap.size>0;
     for(const n of nodes){
       if(has&&amap.has(n.ip)){const a=amap.get(n.ip);n.name=a.name;n.role=a.role;n.inInv=true;}
       else n.inInv = has ? false : null;
+      n.threat = bad.has(n.ip);
     }
   }
 
-  // ======================= 力導向版面 =======================
+  // ===================== 版面 (含 hop 分層) =====================
+  let ringGap=0, maxHopSeen=0;
   function layout(nodes,edges,focus,W,H){
     const cx=W/2,cy=H/2;
+    maxHopSeen=0;
+    for(const n of nodes) if(n.hop!=null&&n.hop>maxHopSeen) maxHopSeen=n.hop;
+    ringGap = maxHopSeen>0 ? Math.min(W,H)*0.42/maxHopSeen : 0;
     const others=nodes.filter(n=>n.ip!==focus);
-    others.forEach((n,i)=>{const ang=(i/Math.max(1,others.length))*Math.PI*2;
-      n.x=cx+Math.cos(ang)*Math.min(W,H)*0.32; n.y=cy+Math.sin(ang)*Math.min(W,H)*0.32; n.vx=0;n.vy=0;});
+    others.forEach((n,i)=>{
+      const ang=(i/Math.max(1,others.length))*Math.PI*2;
+      const rr = (n.hop!=null&&ringGap>0) ? n.hop*ringGap : Math.min(W,H)*0.32;
+      n.x=cx+Math.cos(ang)*rr; n.y=cy+Math.sin(ang)*rr; n.vx=0; n.vy=0;
+    });
     const f=nodes.find(n=>n.ip===focus);
     if(f){f.x=cx;f.y=cy;f.vx=0;f.vy=0;f.pinned=true;}
     const idx=new Map(nodes.map((n,i)=>[n.ip,i]));
     const links=edges.map(e=>({s:idx.get(e.src),t:idx.get(e.dst)}));
-    const REST=120,KS=0.02,KR=2600,DAMP=0.86,CEN=0.008;
+    const REST=120,KS=0.02,KR=2800,DAMP=0.86,CEN=0.008,KRING=0.035;
     return function step(alpha){
       for(let i=0;i<nodes.length;i++){const a=nodes[i];
         for(let j=i+1;j<nodes.length;j++){const b=nodes[j];
           let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy; if(d2<1)d2=1;
           const d=Math.sqrt(d2),fce=(KR/d2)*alpha,fx=(dx/d)*fce,fy=(dy/d)*fce;
           a.vx+=fx;a.vy+=fy;b.vx-=fx;b.vy-=fy;}}
-      for(const l of links){const a=nodes[l.s],b=nodes[l.t]; if(!a||!b)continue;
+      for(const l of links){const a=nodes[l.s],b=nodes[l.t]; if(!a||!b) continue;
         let dx=b.x-a.x,dy=b.y-a.y; const d=Math.sqrt(dx*dx+dy*dy)||1;
         const fce=KS*(d-REST)*alpha,fx=(dx/d)*fce,fy=(dy/d)*fce;
         a.vx+=fx;a.vy+=fy;b.vx-=fx;b.vy-=fy;}
       for(const n of nodes){
-        n.vx+=(cx-n.x)*CEN*alpha; n.vy+=(cy-n.y)*CEN*alpha;
+        // hop 分層：把節點拉向所屬跳數的環
+        if(n.hop!=null&&n.hop>0&&ringGap>0){
+          const dx=n.x-cx,dy=n.y-cy,r=Math.hypot(dx,dy)||1;
+          const f2=(n.hop*ringGap-r)*KRING*alpha;
+          n.vx+=(dx/r)*f2; n.vy+=(dy/r)*f2;
+        }else{
+          n.vx+=(cx-n.x)*CEN*alpha; n.vy+=(cy-n.y)*CEN*alpha;
+        }
         n.vx*=DAMP; n.vy*=DAMP;
-        if(n.pinned) continue; n.x+=n.vx; n.y+=n.vy;}
+        if(n.pinned) continue;
+        n.x+=n.vx; n.y+=n.vy;
+      }
     };
   }
 
-  // ======================= 繪製 =======================
+  // ===================== 繪製 =====================
   let state={nodes:[],edges:[],focus:"",transform:{k:1,x:0,y:0}};
   let rafId=null,alpha=0,stepFn=null,currentRaw=[];
 
-  function scaleRadius(n,sizeBy,maxV){
+  const scaleRadius=(n,sizeBy,maxV)=>{
     const v=sizeBy==="degree"?n.deg:n.total;
     const r=7+22*Math.sqrt(v/(maxV||1));
     return n.cls==="focus"?r+4:r;
-  }
+  };
   const edgeWidth=(w,maxW)=>0.6+5.4*(Math.log(w+1)/Math.log((maxW||1)+1));
-  const fmt=n=>{n=Math.round(n);return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g,",");};
-  const clsName=c=>({focus:"聚焦",internal:"內部",external:"外部",other:"其他"}[c]||c);
-  const esc=s=>String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
 
   function draw(){
     const {nodes,edges,focus}=state;
     while(vp.firstChild) vp.removeChild(vp.firstChild);
     if(!nodes.length){ $("empty").style.display="flex"; return; }
     $("empty").style.display="none";
-    const sizeBy=$("sizeBy").value, showLabels=$("labels").checked;
+    const sizeBy=$("sizeBy").value, showLabels=$("labels").checked, showRings=$("rings").checked;
     const maxV=Math.max(1,...nodes.map(n=>sizeBy==="degree"?n.deg:n.total));
     const maxW=Math.max(1,...edges.map(e=>e.w));
     const pos=new Map(nodes.map(n=>[n.ip,n]));
-
     const f=nodes.find(n=>n.ip===focus);
-    if(f) for(const rr of [70,130,200]){const c=document.createElementNS(NS,"circle");
-      c.setAttribute("class","ring2");c.setAttribute("cx",f.x);c.setAttribute("cy",f.y);c.setAttribute("r",rr);vp.appendChild(c);}
+
+    // hop 分層環
+    if(showRings&&f&&ringGap>0&&maxHopSeen>0){
+      for(let h=1;h<=maxHopSeen;h++){
+        const c=document.createElementNS(NS,"circle");
+        c.setAttribute("class","hopring");
+        c.setAttribute("cx",f.x); c.setAttribute("cy",f.y); c.setAttribute("r",h*ringGap);
+        vp.appendChild(c);
+        const t=document.createElementNS(NS,"text");
+        t.setAttribute("class","hoplabel");
+        t.setAttribute("x",f.x); t.setAttribute("y",f.y-h*ringGap-5);
+        t.setAttribute("text-anchor","middle");
+        t.textContent=h+" 跳";
+        vp.appendChild(t);
+      }
+    }
+
+    nodes.forEach(n=>{ n._r=scaleRadius(n,sizeBy,maxV); });
 
     const seen=new Set();
     for(const e of edges){
@@ -469,92 +589,152 @@
       const p=document.createElementNS(NS,"path");
       const mx=(a.x+b.x)/2,my=(a.y+b.y)/2,dx=b.x-a.x,dy=b.y-a.y;
       const nx=-dy,ny=dx,len=Math.sqrt(nx*nx+ny*ny)||1,off=bend*40;
-      p.setAttribute("d",`M${a.x},${a.y} Q${mx+(nx/len)*off},${my+(ny/len)*off} ${b.x},${b.y}`);
-      p.setAttribute("class","edge"); p.setAttribute("stroke-width",edgeWidth(e.w,maxW));
+      const ul=Math.hypot(dx,dy)||1,back=(b._r||14)+8;
+      const ex=b.x-(dx/ul)*back, ey=b.y-(dy/ul)*back;
+      p.setAttribute("d",`M${a.x},${a.y} Q${mx+(nx/len)*off},${my+(ny/len)*off} ${ex},${ey}`);
+      p.setAttribute("class","edge");
+      p.setAttribute("stroke-width",edgeWidth(e.w,maxW));
+      p.setAttribute("marker-end","url(#arrow)");
+      if(a.threat||b.threat){ p.setAttribute("stroke","#ff4d4d"); p.setAttribute("stroke-opacity","0.95"); }
       const lab=[...e.labels].filter(Boolean).join(", ");
-      p.dataset.tip=`${e.src} → ${e.dst}\n權重: ${fmt(e.w)}`+(e.pk?`  (${fmt(e.pk)} 封包)`:"")+(lab?`\n${lab}`:"");
-      p.addEventListener("mouseenter",()=>{p.classList.add("hi");showTip(p.dataset.tip);});
+      p.__tip=`${e.src} → ${e.dst}\n權重: ${fmt(e.w)}`+(e.pk?`  (${fmt(e.pk)} 封包)`:"")+(lab?`\n${lab}`:"");
+      p.addEventListener("mouseenter",()=>{p.classList.add("hi");showTip(p.__tip);});
       p.addEventListener("mousemove",moveTip);
       p.addEventListener("mouseleave",()=>{p.classList.remove("hi");hideTip();});
       vp.appendChild(p);
     }
+
     for(const n of nodes){
-      const g=document.createElementNS(NS,"g"); g.setAttribute("class","node");
-      const c=document.createElementNS(NS,"circle"); const r=scaleRadius(n,sizeBy,maxV); n._r=r;
-      c.setAttribute("cx",n.x);c.setAttribute("cy",n.y);c.setAttribute("r",r);
-      c.setAttribute("fill",COLOR[n.cls]||COLOR.other);
-      if(n.inInv===false) c.setAttribute("class","rogue");
-      else if(n.cls==="focus"){c.setAttribute("stroke",COLOR.focus);c.setAttribute("stroke-width",2.5);}
+      const g=document.createElementNS(NS,"g"); g.setAttribute("class","node"); g.__node=n;
+      const c=document.createElementNS(NS,"circle"); const r=n._r;
+      c.setAttribute("cx",n.x); c.setAttribute("cy",n.y); c.setAttribute("r",r);
+      c.setAttribute("fill", n.threat ? "#ff4d4d" : (COLOR[n.cls]||COLOR.other));
+      if(n.threat){ c.setAttribute("stroke","#ff4d4d"); c.setAttribute("stroke-width","3");
+        c.style.filter="drop-shadow(0 0 5px #ff2d2d)"; }
+      else if(n.inInv===false) c.setAttribute("class","rogue");
+      else if(n.cls==="focus"){ c.setAttribute("stroke",COLOR.focus); c.setAttribute("stroke-width",2.5); }
+      // 越外層越淡，強化層次感
+      if(n.hop!=null&&n.hop>1) c.setAttribute("fill-opacity",String(Math.max(0.5,1-(n.hop-1)*0.16)));
       g.appendChild(c);
-      if(showLabels){const t=document.createElementNS(NS,"text");
-        t.setAttribute("x",n.x);t.setAttribute("y",n.y-r-4);t.setAttribute("text-anchor","middle");
-        t.textContent=n.name||n.ip; g.appendChild(t);}
+      if(showLabels){
+        const t=document.createElementNS(NS,"text");
+        t.setAttribute("x",n.x); t.setAttribute("y",n.y-r-4); t.setAttribute("text-anchor","middle");
+        t.textContent=n.name||n.ip; g.appendChild(t);
+      }
       let tt=`${n.name?n.name+"  ":""}${n.ip}  (${clsName(n.cls)})`;
+      if(n.hop!=null) tt+=`\n距離聚焦: ${n.hop} 跳`;
       if(n.role) tt+=`\n角色: ${n.role}`;
       if(n.inInv===false) tt+=`\n⚠ 不在資產表`;
+      if(n.threat) tt+=`\n🛑 命中威脅情資`;
       tt+=`\n總流量: ${fmt(n.total)}\n連線數: ${n.deg}  (出 ${fmt(n.outW)} / 入 ${fmt(n.inW)})`;
-      c.dataset.tip=tt;
+      g.__tip=tt;
       c.addEventListener("mouseenter",()=>showTip(tt));
       c.addEventListener("mousemove",moveTip);
       c.addEventListener("mouseleave",hideTip);
-      c.addEventListener("mousedown",ev=>startNodeDrag(ev,n));
       vp.appendChild(g);
     }
   }
 
   function showTip(txt){tip.innerHTML=txt.split("\n").map((l,i)=>i===0?`<span class="t">${esc(l)}</span>`:esc(l)).join("<br>");tip.style.opacity=1;}
-  function moveTip(ev){const r=stage.getBoundingClientRect();let x=ev.clientX-r.left+14,y=ev.clientY-r.top+14;if(x>r.width-310)x-=324;tip.style.left=x+"px";tip.style.top=y+"px";}
+  function moveTip(ev){tipAt(ev.clientX,ev.clientY);}
+  function tipAt(cx,cy){const r=stage.getBoundingClientRect();let x=cx-r.left+14,y=cy-r.top+14;
+    if(x>r.width-310)x-=324; if(y>r.height-100)y-=110; tip.style.left=x+"px"; tip.style.top=y+"px";}
   function hideTip(){tip.style.opacity=0;}
 
   function applyT(){const t=state.transform;vp.setAttribute("transform",`translate(${t.x},${t.y}) scale(${t.k})`);}
-  svg.addEventListener("wheel",ev=>{ev.preventDefault();const t=state.transform,r=svg.getBoundingClientRect();
-    const mx=ev.clientX-r.left,my=ev.clientY-r.top,gx=(mx-t.x)/t.k,gy=(my-t.y)/t.k;
-    const f=ev.deltaY<0?1.12:1/1.12; t.k=Math.max(0.15,Math.min(6,t.k*f));
-    t.x=mx-gx*t.k; t.y=my-gy*t.k; applyT();},{passive:false});
-  let panning=false,panStart=null;
-  svg.addEventListener("mousedown",ev=>{if(ev.target.closest(".node"))return;
-    panning=true;svg.classList.add("grabbing");panStart={x:ev.clientX,y:ev.clientY,tx:state.transform.x,ty:state.transform.y};});
-  window.addEventListener("mousemove",ev=>{if(panning&&panStart){
-    state.transform.x=panStart.tx+(ev.clientX-panStart.x);state.transform.y=panStart.ty+(ev.clientY-panStart.y);applyT();}});
-  window.addEventListener("mouseup",()=>{panning=false;svg.classList.remove("grabbing");});
+  function toGraph(cx,cy){const t=state.transform,r=svg.getBoundingClientRect();return{x:(cx-r.left-t.x)/t.k,y:(cy-r.top-t.y)/t.k};}
+  function zoomAround(cx,cy,factor){const t=state.transform,r=svg.getBoundingClientRect();
+    const mx=cx-r.left,my=cy-r.top,gx=(mx-t.x)/t.k,gy=(my-t.y)/t.k;
+    t.k=Math.max(0.12,Math.min(6,t.k*factor)); t.x=mx-gx*t.k; t.y=my-gy*t.k; applyT();}
 
-  let drag=null;
-  function startNodeDrag(ev,n){ev.stopPropagation();drag=n;n.pinned=true;
-    const move=e=>{const t=state.transform,r=svg.getBoundingClientRect();
-      n.x=(e.clientX-r.left-t.x)/t.k; n.y=(e.clientY-r.top-t.y)/t.k; reheat(); draw();};
-    const up=()=>{if(drag&&drag.ip!==state.focus)drag.pinned=false;drag=null;
-      window.removeEventListener("mousemove",move);window.removeEventListener("mouseup",up);};
-    window.addEventListener("mousemove",move);window.addEventListener("mouseup",up);}
+  const ptrs=new Map(); let dragNode=null,panning=false,panStart=null,pinch=null;
+  const pdist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+  svg.addEventListener("pointerdown",ev=>{
+    try{svg.setPointerCapture(ev.pointerId);}catch(e){}
+    ptrs.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
+    if(ptrs.size===2){const p=[...ptrs.values()];pinch={d:pdist(p[0],p[1])};panning=false;dragNode=null;hideTip();return;}
+    const g=ev.target.closest?ev.target.closest(".node"):null;
+    if(g&&g.__node){ dragNode=g.__node; dragNode.pinned=true; showTip(g.__tip); tipAt(ev.clientX,ev.clientY); }
+    else if(ev.target.classList&&ev.target.classList.contains("edge")){ showTip(ev.target.__tip); tipAt(ev.clientX,ev.clientY); }
+    else { hideTip(); panning=true; svg.classList.add("grabbing");
+      panStart={x:ev.clientX,y:ev.clientY,tx:state.transform.x,ty:state.transform.y}; }
+  });
+  svg.addEventListener("pointermove",ev=>{
+    if(ptrs.has(ev.pointerId)) ptrs.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
+    if(pinch&&ptrs.size>=2){const p=[...ptrs.values()];const nd=pdist(p[0],p[1]);
+      zoomAround((p[0].x+p[1].x)/2,(p[0].y+p[1].y)/2,nd/(pinch.d||1)); pinch.d=nd; return;}
+    if(dragNode){const gp=toGraph(ev.clientX,ev.clientY);dragNode.x=gp.x;dragNode.y=gp.y;tipAt(ev.clientX,ev.clientY);reheat();draw();return;}
+    if(panning&&panStart){state.transform.x=panStart.tx+(ev.clientX-panStart.x);
+      state.transform.y=panStart.ty+(ev.clientY-panStart.y);applyT();}
+  });
+  function endPtr(ev){ ptrs.delete(ev.pointerId); if(ptrs.size<2) pinch=null;
+    if(dragNode){ if(dragNode.ip!==state.focus) dragNode.pinned=false; dragNode=null; }
+    if(ptrs.size===0){ panning=false; svg.classList.remove("grabbing"); } }
+  svg.addEventListener("pointerup",endPtr);
+  svg.addEventListener("pointercancel",endPtr);
+  svg.addEventListener("wheel",ev=>{ev.preventDefault();zoomAround(ev.clientX,ev.clientY,ev.deltaY<0?1.12:1/1.12);},{passive:false});
 
   function reheat(){alpha=Math.max(alpha,0.5);if(!rafId)tick();}
-  function tick(){if(stepFn&&alpha>0.02){stepFn(alpha);alpha*=0.985;draw();rafId=requestAnimationFrame(tick);}else rafId=null;}
+  function tick(){ if(stepFn&&alpha>0.02){ stepFn(alpha); alpha*=0.985; draw(); rafId=requestAnimationFrame(tick); } else rafId=null; }
 
+  // ===================== 主流程 =====================
   function render(){
-    const focus=$("focus").value.trim(), scope=$("scope").value;
+    if(!currentRaw.length){ state.nodes=[];state.edges=[];draw();updateStats(null); return; }
+    const focus=$("focus").value.trim();
+    const hop=parseInt($("hop").value,10)||0;
     const th=parseFloat($("thresh").value)||0;
     const amap=parseAssets($("assets").value);
-    if(!currentRaw.length){ state={nodes:[],edges:[],focus:"",transform:state.transform}; draw(); updateStats(0,0); return; }
-    let g=buildGraph(currentRaw,focus,scope);
-    g=applyThreshold(g,th,focus);
-    annotateAssets(g.nodes,amap,focus);
-    state.nodes=g.nodes; state.edges=g.edges; state.focus=focus; state.transform={k:1,x:0,y:0};
+    const bad=parseThreat($("threat").value);
+
+    let edges=buildGraph(currentRaw);
+    edges=applyThreshold(edges,th);
+    const hf=hopFilter(edges,focus,hop);
+    edges=hf.edges;
+    const nodes=nodesFromEdges(edges,focus,hf.dist);
+    annotate(nodes,amap,bad);
+
+    state.nodes=nodes; state.edges=edges; state.focus=focus; state.transform={k:1,x:0,y:0};
     const W=stage.clientWidth,H=stage.clientHeight;
-    stepFn=layout(g.nodes,g.edges,focus,W,H); alpha=1;
+    stepFn=layout(nodes,edges,focus,W,H);
+    // 節點過多時：斥力計算是 O(n²)，減少迭代避免瀏覽器卡死 (初始已依 hop 分層排好)
+    const heavy=nodes.length>800;
+    alpha = heavy ? 0.25 : 1;
+    if(heavy) status(`節點 ${nodes.length} 個，已簡化排版。建議降低 hop 或提高「最小權重」讓圖更清楚。`,true);
     if(rafId){cancelAnimationFrame(rafId);rafId=null;} tick();
-    updateStats(g.nodes.length,g.edges.length,focus,g,amap);
-    setTimeout(fit,1600);
+    updateStats({nodes,edges,focus,hop,amap,bad,hasFocus:!!focus&&nodes.some(n=>n.ip===focus)});
+    setTimeout(fit,1700);
   }
 
-  function updateStats(nn,ee,focus,g,amap){
-    if(!nn){$("stats").innerHTML="尚未生圖。";return;}
-    let html=`節點 <b>${nn}</b> ・ 連線 <b>${ee}</b>`;
-    if(amap&&amap.size>0){const rogue=g.nodes.filter(n=>n.inInv===false).length;
-      if(rogue) html+=`<br><b style="color:var(--rogue)">${rogue}</b> 個不在資產表`;}
-    if(focus&&g){const fn=g.nodes.find(n=>n.ip===focus);
-      if(fn){const peers=g.edges.filter(e=>e.src===focus||e.dst===focus)
+  function updateStats(o){
+    if(!o||!o.nodes.length){
+      $("stats").innerHTML = o&&o.focus&&!o.hasFocus
+        ? `<b style="color:var(--external)">找不到 ${esc(o.focus)}</b><br>該 IP 不在這批資料中。`
+        : "尚未生圖。";
+      return;
+    }
+    const {nodes,edges,focus,hop,amap}=o;
+    let html=`節點 <b>${nodes.length}</b> ・ 連線 <b>${edges.length}</b>`;
+    if(focus&&hop>0){
+      const byHop=new Map();
+      for(const n of nodes){ const h=n.hop==null?"-":n.hop; byHop.set(h,(byHop.get(h)||0)+1); }
+      html+=`<br><br><span class="hoprow">各跳數節點數：</span><br>`;
+      [...byHop.keys()].sort((a,b)=>a-b).forEach(h=>{
+        html+=`&nbsp;${h===0?"聚焦":h+" 跳"} · <b>${byHop.get(h)}</b><br>`;
+      });
+    }
+    const rogue=nodes.filter(n=>n.inInv===false).length;
+    if(amap&&amap.size>0&&rogue) html+=`<br><b style="color:var(--rogue)">${rogue}</b> 個不在資產表`;
+    const th=nodes.filter(n=>n.threat).length;
+    if(th) html+=`<br><b style="color:var(--threat)">${th}</b> 個命中威脅情資`;
+    if(focus){
+      const peers=edges.filter(e=>e.src===focus||e.dst===focus)
         .map(e=>({ip:e.src===focus?e.dst:e.src,w:e.w})).sort((a,b)=>b.w-a.w).slice(0,5);
-        html+=`<br><br><b>${esc(fn.name||focus)}</b> 前 ${peers.length} 大對象：<br>`+
-          peers.map(p=>`&nbsp;${esc(p.ip)} · ${fmt(p.w)}`).join("<br>");}}
+      if(peers.length){
+        const fn=nodes.find(n=>n.ip===focus);
+        html+=`<br><br><b>${esc((fn&&fn.name)||focus)}</b> 前 ${peers.length} 大對象：<br>`+
+          peers.map(p=>`&nbsp;${esc(p.ip)} · ${fmt(p.w)}`).join("<br>");
+      }
+    }
     $("stats").innerHTML=html;
   }
 
@@ -562,19 +742,22 @@
     const {nodes}=state; if(!nodes.length) return;
     let a=Infinity,b=Infinity,c=-Infinity,d=-Infinity;
     for(const n of nodes){const r=n._r||14;a=Math.min(a,n.x-r);b=Math.min(b,n.y-r);c=Math.max(c,n.x+r);d=Math.max(d,n.y+r);}
-    const W=stage.clientWidth,H=stage.clientHeight,gw=c-a||1,gh=d-b||1,pad=40;
+    const W=stage.clientWidth,H=stage.clientHeight,gw=c-a||1,gh=d-b||1,pad=44;
     const k=Math.min((W-pad*2)/gw,(H-pad*2)/gh,2);
     state.transform.k=k; state.transform.x=(W-(a+c)*k)/2; state.transform.y=(H-(b+d)*k)/2; applyT();
   }
+
   function downloadSVG(){
     const W=stage.clientWidth,H=stage.clientHeight,clone=svg.cloneNode(true);
-    clone.setAttribute("xmlns",NS);clone.setAttribute("width",W);clone.setAttribute("height",H);
-    const bg=document.createElementNS(NS,"rect");bg.setAttribute("width",W);bg.setAttribute("height",H);bg.setAttribute("fill","#0d1522");
+    clone.setAttribute("xmlns",NS); clone.setAttribute("width",W); clone.setAttribute("height",H);
+    const bg=document.createElementNS(NS,"rect");
+    bg.setAttribute("width",W);bg.setAttribute("height",H);bg.setAttribute("fill","#0d1522");
     clone.insertBefore(bg,clone.firstChild);
-    const css=`.edge{fill:none;stroke:#38486a;stroke-opacity:.7}.node text{font-family:monospace;font-size:11px;fill:#cdd8e8;paint-order:stroke;stroke:#0d1522;stroke-width:3px}.node circle{stroke:#0d1522;stroke-width:1.5}.node circle.rogue{stroke:#d76ad7;stroke-width:2.5;stroke-dasharray:3 2}.ring2{fill:none;stroke:#f0b24a;stroke-opacity:.14}`;
-    const st=document.createElementNS(NS,"style");st.textContent=css;clone.insertBefore(st,clone.firstChild);
+    const css=`.edge{fill:none;stroke:#38486a;stroke-opacity:.7}.node text{font-family:monospace;font-size:11px;fill:#cdd8e8;paint-order:stroke;stroke:#0d1522;stroke-width:3px}.node circle{stroke:#0d1522;stroke-width:1.5}.node circle.rogue{stroke:#d76ad7;stroke-width:2.5;stroke-dasharray:3 2}.hopring{fill:none;stroke:#f0b24a;stroke-opacity:.13;stroke-dasharray:4 6}.hoplabel{font-family:monospace;font-size:10px;fill:#f0b24a;fill-opacity:.5}`;
+    const st=document.createElementNS(NS,"style"); st.textContent=css; clone.insertBefore(st,clone.firstChild);
     const blob=new Blob([clone.outerHTML],{type:"image/svg+xml"});
-    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="ip-graph.svg";a.click();
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob); a.download="ip-graph.svg"; a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href),1000);
   }
 
@@ -585,39 +768,77 @@
     file.arrayBuffer().then(buf=>{
       try{
         const t0=performance.now();
-        const {edges,pkts}=parsePcap(buf);
-        currentRaw=edges;
-        const ms=Math.round(performance.now()-t0);
-        status(`已載入 ${file.name}：${pkts.toLocaleString()} 封包 → ${edges.length} 條連線 (${ms}ms)`);
+        const b=new Uint8Array(buf,0,Math.min(4,buf.byteLength));
+        const isPcap = buf.byteLength>=4 && (
+          (b[0]===0x0a&&b[1]===0x0d&&b[2]===0x0d&&b[3]===0x0a) ||
+          (b[0]===0xd4&&b[1]===0xc3&&b[2]===0xb2&&b[3]===0xa1) ||
+          (b[0]===0xa1&&b[1]===0xb2&&b[2]===0xc3&&b[3]===0xd4) ||
+          (b[0]===0x4d&&b[1]===0x3c&&b[2]===0xb2&&b[3]===0xa1) ||
+          (b[0]===0xa1&&b[1]===0xb2&&b[2]===0x3c&&b[3]===0x4d));
+        if(isPcap){
+          const {edges,pkts}=parsePcap(buf);
+          currentRaw=edges;
+          status(`${file.name}：${pkts.toLocaleString()} 封包 → ${edges.length} 條連線 (${Math.round(performance.now()-t0)}ms)`);
+        }else{
+          const text=new TextDecoder("utf-8",{fatal:false}).decode(buf);
+          const edges=parseAny(text);
+          if(!edges||!edges.length) throw new Error("看不出連線資料 (需含來源/目的 IP 欄位)");
+          currentRaw=edges;
+          status(`${file.name}：${edges.length} 條連線 (${Math.round(performance.now()-t0)}ms)`);
+        }
         render();
       }catch(err){ status("解析失敗："+err.message,true); }
     }).catch(err=>status("讀檔失敗："+err.message,true));
   }
 
-  // ======================= 事件 =======================
+  // hop 說明文字
+  const HOPNOTE={
+    0:"不限跳數，畫出完整關聯圖。資料量大時可能很慢，建議搭配最小權重過濾。",
+    1:"只顯示與聚焦 IP 直接通訊的對象。最快、最聚焦。",
+    2:"含鄰居的鄰居 — 可看出間接關聯與橫向移動路徑。",
+    3:"三層關聯。已接近多數網路的完整範圍，圖會明顯變大。"
+  };
+  function syncHop(){
+    const h=parseInt($("hop").value,10)||0;
+    $("hopVal").textContent = h===0 ? "全部" : h+" 跳";
+    $("hopNote").textContent = HOPNOTE[h]||"";
+  }
+
+  // ===================== 事件 =====================
   const drop=$("drop"),fileInput=$("file");
   drop.addEventListener("click",()=>fileInput.click());
   fileInput.addEventListener("change",e=>{ if(e.target.files[0]) loadFile(e.target.files[0]); });
   ["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("over");}));
   ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("over");}));
   drop.addEventListener("drop",e=>{ if(e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
-  // 整個視窗都能接受拖放
   ["dragover","drop"].forEach(ev=>window.addEventListener(ev,e=>e.preventDefault()));
   stage.addEventListener("drop",e=>{e.preventDefault(); if(e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);});
 
+  $("hop").addEventListener("input",()=>{ syncHop(); });
+  $("hop").addEventListener("change",()=>{ syncHop(); if(currentRaw.length) render(); });
   $("focus").addEventListener("change",()=>{ if(currentRaw.length) render(); });
-  $("scope").addEventListener("change",()=>{ if(currentRaw.length) render(); });
-  $("sizeBy").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
   $("thresh").addEventListener("change",()=>{ if(currentRaw.length) render(); });
   $("assets").addEventListener("change",()=>{ if(currentRaw.length) render(); });
+  $("threat").addEventListener("change",()=>{ if(currentRaw.length) render(); });
+  $("sizeBy").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
   $("labels").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
-  $("renderCsv").addEventListener("click",()=>{ currentRaw=parseCSV($("data").value); status(`CSV：${currentRaw.length} 條連線`); render(); });
-  $("sample").addEventListener("click",()=>{ $("data").value=SAMPLE; $("focus").value="10.20.0.30"; currentRaw=parseCSV(SAMPLE); render(); });
+  $("rings").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
+  $("renderPaste").addEventListener("click",()=>{ currentRaw=parseAny($("data").value)||[];
+    status(`已解析：${currentRaw.length} 條連線`); render(); });
+  $("sample").addEventListener("click",()=>{
+    $("data").value=SAMPLE; $("assets").value=SAMPLE_ASSETS; $("threat").value="45.140.17.3";
+    $("focus").value="10.20.0.5"; $("hop").value="1"; syncHop();
+    currentRaw=parseAny(SAMPLE)||[]; status(`範例：${currentRaw.length} 條連線`); render(); });
   $("fit").addEventListener("click",fit);
   $("dl").addEventListener("click",downloadSVG);
   window.addEventListener("resize",()=>{ if(state.nodes.length) draw(); });
 
-  if(typeof module!=="undefined"&&module.exports){ module.exports={parseCSV,buildGraph,ipClass,layout,parsePcap,serviceName,parseAssets,annotateAssets,applyThreshold}; }
+  syncHop();
+
+  if(typeof module!=="undefined"&&module.exports){
+    module.exports={parseCSV,parseESJson,parseAny,parseAssets,parseThreat,parsePcap,
+      buildGraph,hopFilter,nodesFromEdges,applyThreshold,annotate,ipClass,layout};
+  }
 })();
 </script>
 </body>
