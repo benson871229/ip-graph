@@ -542,7 +542,8 @@
     const has=amap&&amap.size>0;
     for(const n of nodes){
       if(has&&amap.has(n.ip)){const a=amap.get(n.ip);n.name=a.name;n.role=a.role;n.inInv=true;}
-      else n.inInv = has ? false : null;
+      else if(has && ipClass(n.ip)==="internal") n.inInv=false;  // 只有內網 IP 沒在表內才標「不在資產表」
+      else n.inInv=null;                                         // 公有/其他 IP:不做未列管標記
       n.threat = bad.has(n.ip);
     }
   }
