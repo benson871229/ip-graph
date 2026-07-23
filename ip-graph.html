@@ -722,6 +722,11 @@
   svg.addEventListener("pointerup",endPtr);
   svg.addEventListener("pointercancel",endPtr);
   svg.addEventListener("wheel",ev=>{ev.preventDefault();zoomAround(ev.clientX,ev.clientY,ev.deltaY<0?1.12:1/1.12);},{passive:false});
+  // 雙擊節點 → 設為聚焦 IP 並重繪
+  svg.addEventListener("dblclick",ev=>{
+    const g=ev.target.closest?ev.target.closest(".node"):null;
+    if(g&&g.__node){ ev.preventDefault(); $("focus").value=g.__node.ip; if(currentRaw.length) render(); }
+  });
 
   function reheat(){alpha=Math.max(alpha,0.5);if(!rafId)tick();}
   function tick(){ if(stepFn&&alpha>0.02){ stepFn(alpha); alpha*=0.985; draw(); rafId=requestAnimationFrame(tick); } else rafId=null; }
