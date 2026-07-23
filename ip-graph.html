@@ -697,13 +697,23 @@
     t.k=Math.max(0.12,Math.min(6,t.k*factor)); t.x=mx-gx*t.k; t.y=my-gy*t.k; applyT();}
 
   const ptrs=new Map(); let dragNode=null,panning=false,panStart=null,pinch=null;
+  let lastTap={ip:null,t:0};   // 雙擊/雙點偵測:記住上次點的節點 IP 與時間
   const pdist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
   svg.addEventListener("pointerdown",ev=>{
     try{svg.setPointerCapture(ev.pointerId);}catch(e){}
     ptrs.set(ev.pointerId,{x:ev.clientX,y:ev.clientY});
     if(ptrs.size===2){const p=[...ptrs.values()];pinch={d:pdist(p[0],p[1])};panning=false;dragNode=null;hideTip();return;}
     const g=ev.target.closest?ev.target.closest(".node"):null;
-    if(g&&g.__node){ dragNode=g.__node; dragNode.pinned=true; showTip(g.__tip); tipAt(ev.clientX,ev.clientY); }
+    if(g&&g.__node){
+      const now=Date.now();
+      // 雙擊(或觸控雙點)同一節點 → 設為聚焦 IP。用 IP 判斷,不受節點重繪影響
+      if(lastTap.ip===g.__node.ip && now-lastTap.t<350){
+        lastTap={ip:null,t:0}; dragNode=null; hideTip();
+        $("focus").value=g.__node.ip; if(currentRaw.length) render(); return;
+      }
+      lastTap={ip:g.__node.ip,t:now};
+      dragNode=g.__node; dragNode.pinned=true; showTip(g.__tip); tipAt(ev.clientX,ev.clientY);
+    }
     else if(ev.target.classList&&ev.target.classList.contains("edge")){ showTip(ev.target.__tip); tipAt(ev.clientX,ev.clientY); }
     else { hideTip(); panning=true; svg.classList.add("grabbing");
       panStart={x:ev.clientX,y:ev.clientY,tx:state.transform.x,ty:state.transform.y}; }
@@ -722,11 +732,6 @@
   svg.addEventListener("pointerup",endPtr);
   svg.addEventListener("pointercancel",endPtr);
   svg.addEventListener("wheel",ev=>{ev.preventDefault();zoomAround(ev.clientX,ev.clientY,ev.deltaY<0?1.12:1/1.12);},{passive:false});
-  // 雙擊節點 → 設為聚焦 IP 並重繪
-  svg.addEventListener("dblclick",ev=>{
-    const g=ev.target.closest?ev.target.closest(".node"):null;
-    if(g&&g.__node){ ev.preventDefault(); $("focus").value=g.__node.ip; if(currentRaw.length) render(); }
-  });
 
   function reheat(){alpha=Math.max(alpha,0.5);if(!rafId)tick();}
   function tick(){ if(stepFn&&alpha>0.02){ stepFn(alpha); alpha*=0.985; draw(); rafId=requestAnimationFrame(tick); } else rafId=null; }
