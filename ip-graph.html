@@ -332,7 +332,52 @@
     })(aggs);
     return edges.length?edges:null;
   }
-  const parseAny=text=>parseESJson(text)||parseCSV(text);
+  // Zeek JSON 日誌：每行一個 JSON 物件 (NDJSON)、JSON 陣列、或單一物件
+  function parseJsonLines(text){
+    const t=text.trim(); if(!t) return null;
+    let objs=[];
+    if(t[0]==="["){
+      try{ const arr=JSON.parse(t); if(Array.isArray(arr)) objs=arr; else return null; }catch(e){ return null; }
+    }else if(t[0]==="{"){
+      try{ const one=JSON.parse(t); if(one&&typeof one==="object") objs=[one]; }catch(e){}
+      if(!objs.length){                                   // 逐行 NDJSON
+        for(const line of t.split(/\r?\n/)){
+          const l=line.trim(); if(!l||l[0]!=="{") continue;
+          try{ objs.push(JSON.parse(l)); }catch(e){}
+        }
+      }
+    }else return null;
+    if(!objs.length) return null;
+    // 同時支援扁平鍵 "id.orig_h" 與巢狀 id:{orig_h:...}
+    const flat=o=>{
+      const f=Object.assign({},o);
+      for(const grp of ["id","source","destination"]){
+        if(o[grp]&&typeof o[grp]==="object"&&!Array.isArray(o[grp]))
+          for(const k in o[grp]) f[grp+"."+k]=o[grp][k];
+      }
+      return f;
+    };
+    const SRC=["id.orig_h","source.ip","src_ip","orig_h","srcip","source_ip"];
+    const DST=["id.resp_h","destination.ip","dest_ip","dst_ip","resp_h","dstip","destination_ip"];
+    const num=v=>{const n=parseFloat(v);return isNaN(n)?0:n;};
+    const edges=[];
+    for(const raw of objs){
+      if(!raw||typeof raw!=="object") continue;
+      const o=flat(raw);
+      let src=null,dst=null;
+      for(const k of SRC){ if(typeof o[k]==="string"&&/[.:]/.test(o[k])){src=o[k];break;} }
+      for(const k of DST){ if(typeof o[k]==="string"&&/[.:]/.test(o[k])){dst=o[k];break;} }
+      if(!src||!dst) continue;
+      let w=num(o.orig_ip_bytes)+num(o.resp_ip_bytes);           // 優先用 IP 層位元組
+      if(!w) w=num(o.orig_bytes)+num(o.resp_bytes);              // 退而求其次
+      if(!w) w=num(o["network.bytes"])||num(o.bytes)||1;
+      const pick=v=>(v==null||v===""||v==="-")?null:v;      // Zeek 用 "-" 表示空值
+      const label=pick(o.service)||pick(o.proto)||pick(o["network.protocol"])||"";
+      edges.push({src,dst,w,label:String(label)});
+    }
+    return edges.length?edges:null;
+  }
+  const parseAny=text=>parseESJson(text)||parseJsonLines(text)||parseCSV(text);
   function parseAssets(text){
     const m=new Map();
     for(const raw of text.split(/\r?\n/)){
@@ -836,7 +881,7 @@
   syncHop();
 
   if(typeof module!=="undefined"&&module.exports){
-    module.exports={parseCSV,parseESJson,parseAny,parseAssets,parseThreat,parsePcap,
+    module.exports={parseCSV,parseESJson,parseJsonLines,parseAny,parseAssets,parseThreat,parsePcap,
       buildGraph,hopFilter,nodesFromEdges,applyThreshold,annotate,ipClass,layout};
   }
 })();
