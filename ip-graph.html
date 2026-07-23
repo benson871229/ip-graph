@@ -125,7 +125,7 @@
         <div id="drop">
           <div class="big">拖放檔案或資料夾到這裡</div>
           <span id="pickFiles"><b>選檔案</b></span> · <span id="pickDir"><b>選資料夾</b></span>
-          <div class="fmt">pcap · pcapng · conn.log (TSV/JSON) · .gz · CSV</div>
+          <div class="fmt">pcap · conn.log (TSV/JSON) · .gz · CSV · 已存的工作階段</div>
         </div>
         <input type="file" id="file" multiple accept=".pcap,.pcapng,.cap,.log,.csv,.tsv,.txt,.json,.gz" style="display:none">
         <input type="file" id="dir" webkitdirectory directory multiple style="display:none">
@@ -202,6 +202,7 @@
   <div id="stage">
     <div id="toolbar">
       <button id="fit">重置視圖</button>
+      <button id="save">儲存工作階段</button>
       <button id="dl">下載 SVG</button>
     </div>
     <svg id="svg">
@@ -760,7 +761,7 @@
         : "尚未生圖。";
       return;
     }
-    const {nodes,edges,focus,hop,amap}=o;
+    const {nodes,edges,focus,hop,amap,bad}=o;
     let html=`節點 <b>${nodes.length}</b> ・ 連線 <b>${edges.length}</b>`;
     if(focus&&hop>0){
       const byHop=new Map();
@@ -772,8 +773,17 @@
     }
     const rogue=nodes.filter(n=>n.inInv===false).length;
     if(amap&&amap.size>0&&rogue) html+=`<br><b style="color:var(--rogue)">${rogue}</b> 個不在資產表`;
-    const th=nodes.filter(n=>n.threat).length;
-    if(th) html+=`<br><b style="color:var(--threat)">${th}</b> 個命中威脅情資`;
+    const hits=nodes.filter(n=>n.threat);
+    if(bad&&bad.size>0){
+      if(hits.length){
+        html+=`<br><br><b style="color:var(--threat)">⚠ 命中威脅情資 ${hits.length} 個：</b><br>`+
+          hits.slice(0,8).map(n=>`&nbsp;<span style="color:var(--threat)">${esc(n.ip)}</span>`+
+            (n.name?` (${esc(n.name)})`:"")).join("<br>");
+        if(hits.length>8) html+=`<br>&nbsp;…另 ${hits.length-8} 個`;
+      }else{
+        html+=`<br><br>威脅情資已載入 ${fmt(bad.size)} 筆，本圖無命中。`;
+      }
+    }
     if(focus){
       const peers=edges.filter(e=>e.src===focus||e.dst===focus)
         .map(e=>({ip:e.src===focus?e.dst:e.src,w:e.w})).sort((a,b)=>b.w-a.w).slice(0,5);
@@ -809,6 +819,53 @@
     setTimeout(()=>URL.revokeObjectURL(a.href),1000);
   }
 
+  // ===================== 工作階段存檔 =====================
+  const SESSION_TAG="ip-graph-session";
+  // 存：已解析的連線 + 所有設定，下次拖回來即完整還原
+  function saveSession(){
+    if(!currentRaw.length){ status("目前沒有資料可儲存。",true); return; }
+    const sess={
+      _type:SESSION_TAG, version:1,
+      savedAt:new Date().toISOString(),
+      focus:$("focus").value, hop:$("hop").value, thresh:$("thresh").value,
+      sizeBy:$("sizeBy").value, labels:$("labels").checked, rings:$("rings").checked,
+      assets:$("assets").value, threat:$("threat").value,
+      edges:currentRaw.map(e=>({s:e.src,d:e.dst,w:e.w,p:e.pk||0,l:e.label||""}))
+    };
+    const d=new Date(), pad=n=>String(n).padStart(2,"0");
+    const stamp=`${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
+    const blob=new Blob([JSON.stringify(sess)],{type:"application/json"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download=`ip-graph-${stamp}.json`;
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+    status(`已儲存 ${fmt(currentRaw.length)} 條連線與目前設定 → ${a.download}`);
+  }
+  // 讀：辨識是不是自己存的工作階段
+  function parseSession(text){
+    const t=text.trim();
+    if(t[0]!=="{" || t.indexOf(SESSION_TAG)<0) return null;
+    let j; try{ j=JSON.parse(t); }catch(e){ return null; }
+    if(!j||j._type!==SESSION_TAG||!Array.isArray(j.edges)) return null;
+    return j;
+  }
+  function restoreSession(j){
+    currentRaw=j.edges.map(e=>({src:e.s,dst:e.d,w:e.w,pk:e.p||0,label:e.l||""}));
+    if(j.focus!=null)  $("focus").value=j.focus;
+    if(j.hop!=null)    $("hop").value=j.hop;
+    if(j.thresh!=null) $("thresh").value=j.thresh;
+    if(j.sizeBy!=null) $("sizeBy").value=j.sizeBy;
+    if(j.assets!=null) $("assets").value=j.assets;
+    if(j.threat!=null) $("threat").value=j.threat;
+    if(typeof j.labels==="boolean") $("labels").checked=j.labels;
+    if(typeof j.rings==="boolean")  $("rings").checked=j.rings;
+    syncHop();
+    const when=j.savedAt?new Date(j.savedAt).toLocaleString():"";
+    status(`已還原工作階段${when?" ("+when+")":""}：${fmt(currentRaw.length)} 條連線`);
+    render();
+  }
+
   function status(msg,err){const s=$("status");s.textContent=msg||"";s.className=err?"err":"";}
 
   // 用瀏覽器原生 DecompressionStream 解 gzip (零依賴)
@@ -831,6 +888,17 @@
   async function loadFiles(fileList){
     const files=[...fileList].filter(f=>f&&f.size>0);
     if(!files.length) return;
+    // 單獨拖入一個工作階段檔 → 直接還原，不進入彙總流程
+    if(files.length===1){
+      try{
+        let b=await files[0].arrayBuffer();
+        if(isGzip(b)) b=await gunzip(b);
+        if(!isPcapBuf(b)){
+          const sess=parseSession(new TextDecoder("utf-8",{fatal:false}).decode(b));
+          if(sess){ restoreSession(sess); return; }
+        }
+      }catch(e){}
+    }
     const agg=new Map(); let okCount=0,failCount=0,rows=0,pkts=0;
     const t0=performance.now();
     for(let i=0;i<files.length;i++){
@@ -931,13 +999,14 @@
     $("focus").value="10.20.0.5"; $("hop").value="1"; syncHop();
     currentRaw=parseAny(SAMPLE)||[]; status(`範例：${currentRaw.length} 條連線`); render(); });
   $("fit").addEventListener("click",fit);
+  $("save").addEventListener("click",saveSession);
   $("dl").addEventListener("click",downloadSVG);
   window.addEventListener("resize",()=>{ if(state.nodes.length) draw(); });
 
   syncHop();
 
   if(typeof module!=="undefined"&&module.exports){
-    module.exports={parseCSV,parseESJson,parseJsonLines,parseAny,parseAssets,parseThreat,parsePcap,gunzip,isGzip,isPcapBuf,
+    module.exports={parseCSV,parseESJson,parseJsonLines,parseAny,parseSession,parseAssets,parseThreat,parsePcap,gunzip,isGzip,isPcapBuf,
       buildGraph,hopFilter,nodesFromEdges,applyThreshold,annotate,ipClass,layout};
   }
 })();
