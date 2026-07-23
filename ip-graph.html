@@ -157,6 +157,7 @@
       </div>
       <label class="check"><input type="checkbox" id="labels" checked> 顯示標籤</label>
       <label class="check"><input type="checkbox" id="rings" checked> 顯示 hop 分層環</label>
+      <label class="check"><input type="checkbox" id="onlyRogue"> 只顯示不在資產表的 IP</label>
 
       <details style="margin-top:14px">
         <summary>資產盤點表 (選填)</summary>
@@ -753,15 +754,27 @@
     const nodes=nodesFromEdges(edges,focus,hf.dist);
     annotate(nodes,amap,bad);
 
-    state.nodes=nodes; state.edges=edges; state.focus=focus; state.transform={k:1,x:0,y:0};
+    // 「只顯示不在資產表的 IP」：只留內網未列管節點 (inInv===false) 與其間連線
+    let vnodes=nodes, vedges=edges;
+    if($("onlyRogue").checked){
+      if(amap.size>0){
+        const keep=new Set(nodes.filter(n=>n.inInv===false).map(n=>n.ip));
+        vnodes=nodes.filter(n=>keep.has(n.ip));
+        vedges=edges.filter(e=>keep.has(e.src)&&keep.has(e.dst));
+      }else{
+        status("「只顯示不在資產表」需先填寫上方的資產盤點表。",true);
+      }
+    }
+
+    state.nodes=vnodes; state.edges=vedges; state.focus=focus; state.transform={k:1,x:0,y:0};
     const W=stage.clientWidth,H=stage.clientHeight;
-    stepFn=layout(nodes,edges,focus,W,H);
+    stepFn=layout(vnodes,vedges,focus,W,H);
     // 節點過多時：斥力計算是 O(n²)，減少迭代避免瀏覽器卡死 (初始已依 hop 分層排好)
-    const heavy=nodes.length>800;
+    const heavy=vnodes.length>800;
     alpha = heavy ? 0.25 : 1;
-    if(heavy) status(`節點 ${nodes.length} 個，已簡化排版。建議降低 hop 或提高「最小權重」讓圖更清楚。`,true);
+    if(heavy) status(`節點 ${vnodes.length} 個，已簡化排版。建議降低 hop 或提高「最小權重」讓圖更清楚。`,true);
     if(rafId){cancelAnimationFrame(rafId);rafId=null;} tick();
-    updateStats({nodes,edges,focus,hop,amap,bad,hasFocus:!!focus&&nodes.some(n=>n.ip===focus)});
+    updateStats({nodes:vnodes,edges:vedges,focus,hop,amap,bad,hasFocus:!!focus&&vnodes.some(n=>n.ip===focus)});
     setTimeout(fit,1700);
   }
 
@@ -1003,6 +1016,7 @@
   $("sizeBy").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
   $("labels").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
   $("rings").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
+  $("onlyRogue").addEventListener("change",()=>{ if(currentRaw.length) render(); });
   $("renderPaste").addEventListener("click",()=>{ currentRaw=parseAny($("data").value)||[];
     status(`已解析：${currentRaw.length} 條連線`); render(); });
   $("sample").addEventListener("click",()=>{
