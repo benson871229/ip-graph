@@ -178,22 +178,30 @@ $xl.Visible = $false; $xl.DisplayAlerts = $false
 
 try {
     $wb = $xl.Workbooks.Open($ExcelFull)
-    $wsNames = @($wb.Worksheets | ForEach-Object { $_.Name })
+    # 用 index 迴圈可靠地取工作表名稱(管線列舉 COM 集合在 5.1 常列不出東西)
+    $wsCount = $wb.Worksheets.Count
+    $wsNames = @()
+    for ($i = 1; $i -le $wsCount; $i++) { $wsNames += [string]$wb.Worksheets.Item($i).Name }
+    Write-Host ("活頁簿有 {0} 個工作表:{1}" -f $wsCount, ($wsNames -join '、'))
 
     # 明確區分「數字→索引」與「文字→名稱」;不靠 COM 猜(命令列傳入的 2 會是字串 "2",
     # 直接丟給 Item 會被當成「名叫 2 的工作表」而找不到)
     function Resolve-Sheet($id) {
-        $count = $wb.Worksheets.Count
         $asInt = 0
         if ($id -is [int]) { $asInt = $id }
         elseif ("$id" -match '^\s*\d+\s*$') { $asInt = [int]("$id".Trim()) }
         if ($asInt -ge 1) {
-            if ($asInt -le $count) { return $wb.Worksheets.Item($asInt) }
-            throw "工作表索引 $asInt 超出範圍(這本共 $count 個)。工作表:" + ($wsNames -join '、')
+            if ($asInt -le $wsCount) { return $wb.Worksheets.Item($asInt) }
+            throw "工作表索引 $asInt 超出範圍(這本共 $wsCount 個)。工作表:" + ($wsNames -join '、')
         }
-        foreach ($nm in $wsNames) {
-            if ("$id" -eq $nm -or ("$id").Trim() -eq $nm.Trim()) { return $wb.Worksheets.Item($nm) }
+        $ids = ("$id").Trim()
+        for ($i = 1; $i -le $wsCount; $i++) {
+            $nm = [string]$wb.Worksheets.Item($i).Name
+            if ($nm -eq "$id" -or $nm.Trim() -eq $ids -or $nm.Trim().ToLower() -eq $ids.ToLower()) {
+                return $wb.Worksheets.Item($i)
+            }
         }
+        try { return $wb.Worksheets.Item("$id") } catch {}   # 最後容錯:名稱含特殊字元時直接問 Excel
         throw "找不到工作表『$id』。這本活頁簿的工作表:" + ($wsNames -join '、')
     }
 
