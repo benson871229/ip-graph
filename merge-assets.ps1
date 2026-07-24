@@ -182,7 +182,9 @@ try {
     $wsCount = $wb.Worksheets.Count
     $wsNames = @()
     for ($i = 1; $i -le $wsCount; $i++) { $wsNames += [string]$wb.Worksheets.Item($i).Name }
-    Write-Host ("活頁簿有 {0} 個工作表:{1}" -f $wsCount, ($wsNames -join '、'))
+    $wsListed = @(); for ($i = 0; $i -lt $wsCount; $i++) { $wsListed += ("[{0}] {1}" -f ($i + 1), $wsNames[$i]) }
+    Write-Host ("活頁簿有 {0} 個工作表:{1}" -f $wsCount, ($wsListed -join '  '))
+    Write-Host "  (指定工作表時,-AddToSheet / -Sheets 可用中括號裡的索引數字,或用名稱)"
 
     # 明確區分「數字→索引」與「文字→名稱」;不靠 COM 猜(命令列傳入的 2 會是字串 "2",
     # 直接丟給 Item 會被當成「名叫 2 的工作表」而找不到)
