@@ -79,7 +79,24 @@ try {
     [Net.ServicePointManager]::SecurityProtocol =
         [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls
 } catch {}
-if ($SkipCertCheck) { [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true } }
+# 注意:不能用 scriptblock 當回呼 ({$true}) — 5.1 由背景執行緒呼叫時會失敗,
+# 出現「基礎連接已關閉: 無法為 SSL/TLS 安全通道建立信任關係」。必須用編譯過的 C# 委派。
+if ($SkipCertCheck) {
+    if (-not ("TrustAllCerts" -as [type])) {
+        Add-Type -TypeDefinition @"
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public static class TrustAllCerts {
+    public static void Enable() {
+        ServicePointManager.ServerCertificateValidationCallback =
+            delegate (object s, X509Certificate c, X509Chain ch, SslPolicyErrors e) { return true; };
+    }
+}
+"@
+    }
+    [TrustAllCerts]::Enable()
+}
 
 # --------------------------------------------------------------------------- #
 #  認證標頭

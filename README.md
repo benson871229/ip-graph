@@ -116,7 +116,13 @@ curl -s https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt \
 
 ```powershell
 [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
-[Net.ServicePointManager]::ServerCertificateValidationCallback={$true}
+Add-Type -TypeDefinition @"
+using System.Net; using System.Net.Security; using System.Security.Cryptography.X509Certificates;
+public static class TrustAllCerts { public static void Enable() {
+  ServicePointManager.ServerCertificateValidationCallback =
+    delegate (object s, X509Certificate c, X509Chain ch, SslPolicyErrors e) { return true; }; } }
+"@
+[TrustAllCerts]::Enable()     # 自簽憑證。不能用 {$true} scriptblock — 5.1 會報 SSL/TLS 信任關係錯誤
 $cred=Get-Credential          # 輸入 SO/Kibana 帳密
 $u=$cred.UserName;$p=$cred.GetNetworkCredential().Password
 $h=@{Authorization="Basic "+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${u}:${p}"));'kbn-xsrf'='true'}

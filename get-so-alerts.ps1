@@ -73,7 +73,23 @@ try {
     [Net.ServicePointManager]::SecurityProtocol =
         [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls
 } catch {}
-if ($SkipCertCheck) { [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true } }
+# 不能用 scriptblock 回呼 ({$true}) — 5.1 背景執行緒呼叫會失敗 (SSL/TLS 信任關係錯誤),用 C# 委派
+if ($SkipCertCheck) {
+    if (-not ("TrustAllCerts" -as [type])) {
+        Add-Type -TypeDefinition @"
+using System.Net;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+public static class TrustAllCerts {
+    public static void Enable() {
+        ServicePointManager.ServerCertificateValidationCallback =
+            delegate (object s, X509Certificate c, X509Chain ch, SslPolicyErrors e) { return true; };
+    }
+}
+"@
+    }
+    [TrustAllCerts]::Enable()
+}
 
 # --------------------------------------------------------------------------- #
 #  認證
