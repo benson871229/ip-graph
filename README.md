@@ -71,6 +71,11 @@ curl -s https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt \
 | Elasticsearch 直連 | `https://<host>:9200` | 送 `POST /<index>/_search` |
 | Kibana console proxy | `https://<host>:5601` | 送 `POST /api/console/proxy?path=<index>/_search&method=POST`,自動帶 `kbn-xsrf` |
 
+> **Security Onion 使用者注意**:SO 2.x 把所有服務藏在 **443 的反向代理**後面,
+> Kibana 掛在網址路徑下(例如 `https://<so>/kibana/app/...`),而 **Elasticsearch 的 9200
+> 通常不對分析師開放**。所以請走 **Kibana console proxy 模式**,並把 base path 放進端點:
+> 端點填 `https://<so>/kibana`(不是 `:9200`、也不是 `:5601`)。
+
 欄位預設走 ECS(`source.ip` / `destination.ip` / `network.bytes`);Zeek 原始欄位可改成
 `id.orig_h` / `id.resp_h` / `orig_ip_bytes`。認證填在「認證」欄:
 
@@ -87,18 +92,46 @@ curl -s https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt \
 因為送請求的是 PowerShell 不是瀏覽器,**完全沒有 CORS 問題**。
 
 ```powershell
-# 帳密查最近 24 小時(省略 -Password 會提示輸入,不留在命令列歷史)
-.\get-so-graph.ps1 -Server https://securityonion:9200 -Username analyst `
+# Security Onion(Kibana 藏在 443 的 /kibana 路徑下)— 最常見的情況
+# 省略 -Password 會提示輸入,不留在命令列歷史
+.\get-so-graph.ps1 -Server https://10.x.x.x/kibana -Mode kibana -Username analyst `
+    -Index "*:so-*" -Since now-24h -OutFile graph.csv -SkipCertCheck
+
+# ES 直連(9200 有對你開放時才適用)
+.\get-so-graph.ps1 -Server https://so:9200 -Username analyst `
     -Index "*:so-*" -Since now-24h -OutFile graph.csv -SkipCertCheck
 
 # 用 API key、Zeek 原始欄位、聚焦某台主機
-.\get-so-graph.ps1 -Server https://so:9200 -ApiKey "AbCd12==" `
+.\get-so-graph.ps1 -Server https://10.x.x.x/kibana -Mode kibana -ApiKey "AbCd12==" `
     -SrcField id.orig_h -DstField id.resp_h -BytesField orig_ip_bytes `
     -Query 'id.orig_h:10.20.0.30 OR id.resp_h:10.20.0.30' -OutFile ws.csv -SkipCertCheck
 ```
 
 產出的 `graph.csv` 拖進 `ip-graph.html` 即可生圖,hop / 資產表 / 威脅標記照常適用。
 瀏覽器 API 面板適合快速互動;這支腳本適合固定查詢、排程、或不想碰 CORS 的情況。
+
+#### 第一次使用:先跑連通性測試
+
+跑整支腳本前,先用這 6 行確認「連得到 + 認證通過」(把 `10.x.x.x` 換成你的 SO):
+
+```powershell
+[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
+[Net.ServicePointManager]::ServerCertificateValidationCallback={$true}
+$cred=Get-Credential          # 輸入 SO/Kibana 帳密
+$u=$cred.UserName;$p=$cred.GetNetworkCredential().Password
+$h=@{Authorization="Basic "+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${u}:${p}"));'kbn-xsrf'='true'}
+Invoke-RestMethod -Method Post -Headers $h -Uri "https://10.x.x.x/kibana/api/console/proxy?path=_cluster/health&method=GET"
+```
+
+| 結果 | 意義 | 下一步 |
+|---|---|---|
+| JSON(有 `status`/`cluster_name`) | ✅ 通了 | 直接跑 `get-so-graph.ps1` |
+| 401 / 403 | 帳號沒有走 API 的權限 | 在 Kibana 建一把 API key 改用 `-ApiKey` |
+| 回傳 HTML(登入頁) | SO 前面有 SSO 登入代理,Basic auth 進不去 | 用 API key,或請管理員開一組 ES 原生帳號 |
+| 逾時 / 連不上 | 網路不通或路徑不對 | 確認瀏覽器開 Kibana 的完整網址,base path 照抄 |
+
+在 Kibana 建 API key:左選單 **Stack Management → Security → API Keys → Create**,
+把給的 `Encoded` 值整段拿來當 `-ApiKey` 的參數即可(權限只需目標索引的 `read`)。
 
 ### 告警疊圖 · 把 Suricata 告警畫上節點
 
@@ -108,7 +141,7 @@ curl -s https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt \
 1. 用 `get-so-alerts.ps1` 帶帳密查 SO 的 Suricata 告警,輸出 `ip,嚴重度,告警名稱`:
 
    ```powershell
-   .\get-so-alerts.ps1 -Server https://securityonion:9200 -Username analyst `
+   .\get-so-alerts.ps1 -Server https://10.x.x.x/kibana -Mode kibana -Username analyst `
        -Since now-24h -OutFile alerts.csv -SkipCertCheck
    ```
 
