@@ -95,7 +95,15 @@ curl -s https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt \
    ```
 
 2. **同源部署**:把 `ip-graph.html` 放到與 ES/Kibana 同一台、同一 port 提供,就不受 CORS 限制。
-3. **本機小代理**:用一支加了 CORS 標頭的反向代理轉發(可用 PowerShell 寫,維持零安裝)。
+3. **本機小代理**:用隨附的零安裝 PowerShell 代理 `cors-proxy.ps1` 轉發(維持零安裝):
+
+   ```powershell
+   # ES 自簽憑證常見,加 -SkipCertCheck;要帳密不進瀏覽器可加 -InjectAuth
+   .\cors-proxy.ps1 -Backend https://securityonion:9200 -SkipCertCheck
+   ```
+
+   然後在工具的「端點 URL」填 `http://localhost:8080`,索引/欄位照舊。
+   代理會補上 CORS 標頭並把 `/<index>/_search` 轉到後端;後端的錯誤狀態也會原樣帶回。
 
 > 安全提醒:認證資訊只存在當下的瀏覽器分頁,不會寫進工作階段檔;但 `allow-origin: "*"`
 > 會放寬 ES 的跨來源限制,正式環境請改成指定來源。
