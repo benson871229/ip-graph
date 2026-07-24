@@ -128,8 +128,9 @@ else {
 }
 
 function Invoke-ES($body) {
+    $resp = $null
     try {
-        return Invoke-RestMethod -Uri $url -Method Post -Headers $headers -Body $body -ContentType 'application/json'
+        $resp = Invoke-RestMethod -Uri $url -Method Post -Headers $headers -Body $body -ContentType 'application/json'
     }
     catch {
         $msg = $_.Exception.Message
@@ -143,6 +144,13 @@ function Invoke-ES($body) {
         }
         throw $msg
     }
+    # SO 2.4 的 SSO 會對未帶登入 cookie 的請求回 200 + HTML 登入頁 → 明確報出,不誤判成權限問題
+    if ($resp -is [string] -and $resp -match '<html|<!DOCTYPE|<form') {
+        throw ("伺服器回的是 HTML 登入頁,不是 ES 回應 — 你的 SO 有 SSO 網頁登入,Basic auth 進不了 /kibana。" +
+               "`n解法:請管理員在 SO 主機執行  sudo so-firewall includehost elasticsearch_rest 你的分析機IP" +
+               "`n開通後改用 ES 直連:  -Server https://SO主機:9200  (去掉 -Mode kibana,帳密同 SO 登入)")
+    }
+    return $resp
 }
 
 # --------------------------------------------------------------------------- #

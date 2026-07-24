@@ -134,11 +134,28 @@ Invoke-RestMethod -Method Post -Headers $h -Uri "https://10.x.x.x/kibana/api/con
 |---|---|---|
 | JSON(有 `status`/`cluster_name`) | ✅ 通了 | 直接跑 `get-so-graph.ps1` |
 | 401 / 403 | 帳號沒有走 API 的權限 | 在 Kibana 建一把 API key 改用 `-ApiKey` |
-| 回傳 HTML(登入頁) | SO 前面有 SSO 登入代理,Basic auth 進不去 | 用 API key,或請管理員開一組 ES 原生帳號 |
+| 回傳 HTML(登入頁) | SO 的 SSO 登入代理攔下請求,Basic auth 進不了 443 | 見下方「SO 2.4 SSO 環境」 |
 | 逾時 / 連不上 | 網路不通或路徑不對 | 確認瀏覽器開 Kibana 的完整網址,base path 照抄 |
 
-在 Kibana 建 API key:左選單 **Stack Management → Security → API Keys → Create**,
-把給的 `Encoded` 值整段拿來當 `-ApiKey` 的參數即可(權限只需目標索引的 `read`)。
+腳本已能自動辨識 HTML 登入頁並印出對應解法(不會再誤判成權限不足)。
+
+#### SO 2.4 SSO 環境:正規解法是開放 9200 直連
+
+SO 2.4 用網頁 SSO(登入頁)保護 443 上的所有服務 — Basic auth 與 API key
+都過不了那層,這不是你帳號的問題。官方作法是把 **Elasticsearch 9200** 開放給你的
+分析機,然後**直連**(SOC 帳號會同步成 Elasticsearch 帳號,同一組帳密可用):
+
+```bash
+# 在 SO 主機的 console 上執行(需要管理員)
+sudo so-firewall includehost elasticsearch_rest 你的分析機IP
+```
+
+開通後改用 ES 直連模式(去掉 -Mode kibana):
+
+```powershell
+.\get-so-graph.ps1 -Server https://SO主機IP:9200 -Username 你的SO帳號 `
+    -Index "logs-*" -Since now-24h -OutFile graph.csv -SkipCertCheck
+```
 
 ### 告警疊圖 · 把 Suricata 告警畫上節點
 
