@@ -58,6 +58,48 @@ curl -s https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt \
   | awk '$2>=3{print $1}' > malicious-ips.txt
 ```
 
+## 從 API 取得資料(實驗性 · 本分支)
+
+> 這是 `claude/api-so-kibana` 分支的附加功能,主線的零依賴/離線行為完全不變。
+
+展開左側「**從 API 取得資料 · SO / Kibana / ES**」,直接向 Elasticsearch 的 `_search`
+送 composite 聚合(來源 × 目的,`sum(bytes)`),回應沿用既有的 ES 聚合解析器繪圖。
+支援兩種模式:
+
+| 模式 | 端點 | 說明 |
+|------|------|------|
+| Elasticsearch 直連 | `https://<host>:9200` | 送 `POST /<index>/_search` |
+| Kibana console proxy | `https://<host>:5601` | 送 `POST /api/console/proxy?path=<index>/_search&method=POST`,自動帶 `kbn-xsrf` |
+
+欄位預設走 ECS(`source.ip` / `destination.ip` / `network.bytes`);Zeek 原始欄位可改成
+`id.orig_h` / `id.resp_h` / `orig_ip_bytes`。認證填在「認證」欄:
+
+- API key:`ApiKey <base64>`
+- 帳密:`Basic 帳號:密碼`(工具會自動 base64,不必自己編)
+
+超過 5000 對連線會截斷,請縮小時間範圍或加 KQL 過濾。**取回後的 hop / 最小權重 /
+資產表 / 威脅情資標記全部照常適用。**
+
+### ⚠️ CORS(最常見的卡關點)
+
+瀏覽器從 `file://` 或不同來源打 ES/Kibana 會被 CORS 擋(錯誤訊息通常是 `Failed to fetch`)。
+三選一解決:
+
+1. **ES 開 CORS**(推薦):在 `elasticsearch.yml` 加
+
+   ```yaml
+   http.cors.enabled: true
+   http.cors.allow-origin: "*"            # 或指定來源
+   http.cors.allow-headers: Authorization,Content-Type,kbn-xsrf
+   http.cors.allow-methods: GET,POST,OPTIONS
+   ```
+
+2. **同源部署**:把 `ip-graph.html` 放到與 ES/Kibana 同一台、同一 port 提供,就不受 CORS 限制。
+3. **本機小代理**:用一支加了 CORS 標頭的反向代理轉發(可用 PowerShell 寫,維持零安裝)。
+
+> 安全提醒:認證資訊只存在當下的瀏覽器分頁,不會寫進工作階段檔;但 `allow-origin: "*"`
+> 會放寬 ES 的跨來源限制,正式環境請改成指定來源。
+
 ## 大流量環境的建議用法
 
 瀏覽器讀 pcap 是整檔載入記憶體,適合數百 MB 以內。流量很大的環境建議**在後端先彙總**,只把結果丟進工具:

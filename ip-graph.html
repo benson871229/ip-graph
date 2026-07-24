@@ -69,6 +69,7 @@
   details[open]>summary::before{content:"▾ "}
   details .inner{padding:0 12px 12px}
   .tinynote{font-size:10.5px;color:var(--muted);margin:8px 0;line-height:1.5;font-family:var(--mono)}
+  .apilbl{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:8px 0 3px;font-family:var(--mono)}
   .btns{display:flex;gap:8px;margin-top:2px}
   button{cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--text);
     border-radius:6px;padding:9px 12px;font-size:12.5px;font-family:var(--sans);
@@ -183,6 +184,37 @@
           <div class="btns" style="margin-top:8px">
             <button id="renderPaste">用貼上資料繪製</button>
             <button id="sample">載入範例</button>
+          </div>
+        </div>
+      </details>
+
+      <details>
+        <summary>從 API 取得資料 · SO / Kibana / ES (實驗性)</summary>
+        <div class="inner">
+          <div class="tinynote">向 Elasticsearch <b>_search</b> 送 composite 聚合並重用 ES 解析。需 <b>ES 開啟 CORS</b> 或本檔<b>同源部署</b>;若出現 CORS / Failed to fetch 請見 README。</div>
+          <label class="apilbl">模式</label>
+          <select id="apiMode">
+            <option value="es">Elasticsearch 直連 (:9200)</option>
+            <option value="kibana">Kibana console proxy (:5601)</option>
+          </select>
+          <label class="apilbl">端點 URL</label>
+          <input id="apiUrl" type="text" placeholder="https://securityonion:9200">
+          <label class="apilbl">索引 / index pattern</label>
+          <input id="apiIndex" type="text" placeholder="*:so-* 或 logs-zeek.conn-*">
+          <div class="row">
+            <div><label class="apilbl">來源欄位</label><input id="apiSrc" type="text" value="source.ip"></div>
+            <div><label class="apilbl">目的欄位</label><input id="apiDst" type="text" value="destination.ip"></div>
+          </div>
+          <div class="row">
+            <div><label class="apilbl">流量欄位 (sum)</label><input id="apiBytes" type="text" value="network.bytes"></div>
+            <div><label class="apilbl">時間起 (gte)</label><input id="apiRange" type="text" value="now-24h"></div>
+          </div>
+          <label class="apilbl">額外過濾 · KQL/Lucene (選填)</label>
+          <input id="apiQuery" type="text" placeholder="destination.ip:10.20.0.5">
+          <label class="apilbl">認證 (選填)</label>
+          <input id="apiAuth" type="text" placeholder="ApiKey xx== 或 Basic 帳:密">
+          <div class="btns" style="margin-top:8px">
+            <button id="apiFetch" class="primary">查詢並繪製</button>
           </div>
         </div>
       </details>
@@ -993,6 +1025,71 @@
     $("hopNote").textContent = HOPNOTE[h]||"";
   }
 
+  // ===================== API 取數 (SO / Kibana / ES) =====================
+  // 直接向 Elasticsearch _search 送 composite 聚合,回應交給既有 parseESJson 解析。
+  // 需 ES 開啟 CORS 或本檔同源部署;認證一律走 Authorization 標頭 (不用 cookie)。
+  function esAuthHeader(v){
+    v=(v||"").trim(); if(!v) return null;
+    const m=/^Basic\s+([^:\s]+:.+)$/i.exec(v);       // "Basic 帳:密" → 自動 base64
+    if(m){ try{ return "Basic "+btoa(unescape(encodeURIComponent(m[1]))); }catch(e){ return v; } }
+    return v;                                         // 已是完整標頭值 (ApiKey.. / Bearer.. / Basic base64..)
+  }
+  function esBuildBody(after){
+    const src=$("apiSrc").value.trim()||"source.ip";
+    const dst=$("apiDst").value.trim()||"destination.ip";
+    const by =$("apiBytes").value.trim();
+    const range=$("apiRange").value.trim();
+    const q=$("apiQuery").value.trim();
+    const filter=[];
+    if(range) filter.push({range:{"@timestamp":{gte:range}}});
+    if(q)     filter.push({query_string:{query:q}});
+    const comp={size:1000,sources:[{s:{terms:{field:src}}},{d:{terms:{field:dst}}}]};
+    if(after) comp.after=after;
+    const aggs={pairs:{composite:comp}};
+    if(by) aggs.pairs.aggs={bytes:{sum:{field:by}}};
+    return {size:0,query:{bool:{filter}},aggs};
+  }
+  async function esFetch(){
+    const rawUrl=$("apiUrl").value.trim().replace(/\/+$/,"");
+    const index=$("apiIndex").value.trim();
+    if(!rawUrl||!index){ status("請填入端點 URL 與索引。",true); return; }
+    const auth=esAuthHeader($("apiAuth").value);
+    const headers={"Content-Type":"application/json"};
+    if(auth) headers["Authorization"]=auth;
+    let url;
+    if($("apiMode").value==="kibana"){
+      headers["kbn-xsrf"]="true";
+      url=rawUrl+"/api/console/proxy?path="+encodeURIComponent(index+"/_search")+"&method=POST";
+    }else{
+      url=rawUrl+"/"+encodeURIComponent(index)+"/_search";
+    }
+    const cap=5000; let after=null,pages=0,buckets=[];
+    $("apiFetch").disabled=true; status("查詢中… (0)");
+    try{
+      do{
+        const res=await fetch(url,{method:"POST",headers,body:JSON.stringify(esBuildBody(after))});
+        if(!res.ok){ const t=await res.text().catch(()=>""); throw new Error("HTTP "+res.status+" "+t.slice(0,240)); }
+        const j=await res.json();
+        const agg=j.aggregations&&j.aggregations.pairs;
+        if(!agg) throw new Error("回應沒有 aggregations.pairs — 檢查欄位名稱或權限。");
+        buckets=buckets.concat(agg.buckets||[]);
+        after=agg.after_key||null; pages++;
+        status(`查詢中… (${fmt(buckets.length)} 對)`);
+      }while(after && buckets.length<cap && pages<20);
+      const edges=parseESJson(JSON.stringify({aggregations:{pairs:{buckets}}}))||[];
+      if(!edges.length){ status("查詢成功但沒有連線資料 (0 對) — 檢查索引/時間範圍/欄位。",true); return; }
+      currentRaw=edges.map(e=>({src:e.src,dst:e.dst,w:e.w,pk:0,label:e.label||""}));
+      const trunc = after ? ` (已達上限 ${fmt(cap)} 對,已截斷;請縮小時間範圍或加過濾)` : "";
+      status(`API 取得 ${fmt(currentRaw.length)} 條連線${trunc}`);
+      render();
+    }catch(err){
+      const cors=/Failed to fetch|NetworkError|load failed/i.test(err.message);
+      status("API 失敗:"+err.message+(cors?" — 多半是 CORS/連線被瀏覽器擋,請見 README 的 CORS 說明。":""),true);
+    }finally{
+      $("apiFetch").disabled=false;
+    }
+  }
+
   // ===================== 事件 =====================
   const drop=$("drop"),fileInput=$("file"),dirInput=$("dir");
   $("pickFiles").addEventListener("click",e=>{e.stopPropagation();fileInput.click();});
@@ -1026,6 +1123,7 @@
   $("fit").addEventListener("click",fit);
   $("save").addEventListener("click",saveSession);
   $("dl").addEventListener("click",downloadSVG);
+  $("apiFetch").addEventListener("click",esFetch);
   window.addEventListener("resize",()=>{ if(state.nodes.length) draw(); });
 
   syncHop();
