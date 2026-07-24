@@ -179,7 +179,30 @@ try {
         $resp = Invoke-ES $body
         $buckets = $null
         if ($resp.aggregations -and $resp.aggregations.byip) { $buckets = $resp.aggregations.byip.buckets }
-        if ($null -eq $buckets) { throw "回應沒有 aggregations.byip — 檢查索引/欄位/權限或 -AlertFilter。" }
+        if ($null -eq $buckets) {
+            # 最常見原因:索引樣式沒對到任何索引 (ES 回 200 但 aggregations 消失)。自動列出實際索引。
+            $hint = "回應沒有 aggregations.byip — 最常見原因是 -Index『$Index』沒對到任何索引。"
+            try {
+                $catPath = '_cat/indices?format=json&h=index'
+                if ($Mode -eq 'kibana') {
+                    $iu = "$base/api/console/proxy?path=" + [Uri]::EscapeDataString($catPath) + "&method=GET"
+                    $ilist = Invoke-RestMethod -Uri $iu -Method Post -Headers $headers
+                } else {
+                    $ilist = Invoke-RestMethod -Uri "$base/$catPath" -Method Get -Headers $headers
+                }
+                $names = @($ilist | ForEach-Object { $_.index } | Where-Object { $_ -and $_[0] -ne '.' } | Sort-Object)
+                $inter = @($names | Where-Object { $_ -match 'zeek|conn|suricata|alert|so-|logs-' } | Select-Object -First 25)
+                if ($inter.Count -gt 0) {
+                    $hint += "`n這台 ES 實際存在的相關索引 (取前 25 個):`n  " + ($inter -join "`n  ")
+                    $hint += "`n請改用符合的樣式重跑,例如 -Index `"logs-*`" (SO 2.4) 或 -Index `"so-*`" (SO 2.3)。"
+                } elseif ($names.Count -gt 0) {
+                    $hint += "`n這台 ES 的索引 (取前 25 個):`n  " + (@($names | Select-Object -First 25) -join "`n  ")
+                } else {
+                    $hint += "`n且列不出任何索引 — 可能是帳號權限不足。"
+                }
+            } catch { $hint += "`n(嘗試列出索引也失敗:$($_.Exception.Message))" }
+            throw $hint
+        }
 
         foreach ($b in $buckets) {
             $sev = $null

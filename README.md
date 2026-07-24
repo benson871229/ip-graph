@@ -94,12 +94,13 @@ curl -s https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt \
 ```powershell
 # Security Onion(Kibana 藏在 443 的 /kibana 路徑下)— 最常見的情況
 # 省略 -Password 會提示輸入,不留在命令列歷史
+# 索引:SO 2.4 用 logs-*;SO 2.3 用 *:so-* 或 so-*。填錯時腳本會自動列出實際存在的索引
 .\get-so-graph.ps1 -Server https://10.x.x.x/kibana -Mode kibana -Username analyst `
-    -Index "*:so-*" -Since now-24h -OutFile graph.csv -SkipCertCheck
+    -Index "logs-*" -Since now-24h -OutFile graph.csv -SkipCertCheck
 
 # ES 直連(9200 有對你開放時才適用)
 .\get-so-graph.ps1 -Server https://so:9200 -Username analyst `
-    -Index "*:so-*" -Since now-24h -OutFile graph.csv -SkipCertCheck
+    -Index "logs-*" -Since now-24h -OutFile graph.csv -SkipCertCheck
 
 # 用 API key、Zeek 原始欄位、聚焦某台主機
 .\get-so-graph.ps1 -Server https://10.x.x.x/kibana -Mode kibana -ApiKey "AbCd12==" `
