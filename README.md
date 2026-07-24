@@ -80,7 +80,27 @@ curl -s https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt \
 超過 5000 對連線會截斷,請縮小時間範圍或加 KQL 過濾。**取回後的 hop / 最小權重 /
 資產表 / 威脅情資標記全部照常適用。**
 
-### ⚠️ CORS(最常見的卡關點)
+### 推薦:用 `get-so-graph.ps1` 帶帳密查詢(免 CORS)
+
+如果你有 SO/ES 帳密,**最省事的做法是不走瀏覽器**,改用隨附的 PowerShell 抽取腳本:
+它用帳密(或 API key)直接向 ES 查詢、在伺服器端彙總,輸出成 CSV 拖進工具。
+因為送請求的是 PowerShell 不是瀏覽器,**完全沒有 CORS 問題**。
+
+```powershell
+# 帳密查最近 24 小時(省略 -Password 會提示輸入,不留在命令列歷史)
+.\get-so-graph.ps1 -Server https://securityonion:9200 -Username analyst `
+    -Index "*:so-*" -Since now-24h -OutFile graph.csv -SkipCertCheck
+
+# 用 API key、Zeek 原始欄位、聚焦某台主機
+.\get-so-graph.ps1 -Server https://so:9200 -ApiKey "AbCd12==" `
+    -SrcField id.orig_h -DstField id.resp_h -BytesField orig_ip_bytes `
+    -Query 'id.orig_h:10.20.0.30 OR id.resp_h:10.20.0.30' -OutFile ws.csv -SkipCertCheck
+```
+
+產出的 `graph.csv` 拖進 `ip-graph.html` 即可生圖,hop / 資產表 / 威脅標記照常適用。
+瀏覽器 API 面板適合快速互動;這支腳本適合固定查詢、排程、或不想碰 CORS 的情況。
+
+### ⚠️ CORS(瀏覽器 API 面板才會遇到)
 
 瀏覽器從 `file://` 或不同來源打 ES/Kibana 會被 CORS 擋(錯誤訊息通常是 `Failed to fetch`)。
 三選一解決:
