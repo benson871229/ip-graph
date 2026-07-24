@@ -41,7 +41,7 @@
   textarea{width:100%;resize:vertical;background:var(--bg);color:var(--text);
     border:1px solid var(--line);border-radius:6px;padding:9px 10px;
     font-family:var(--mono);font-size:12px;line-height:1.5}
-  #data{height:92px} #assets{height:66px} #threat{height:56px}
+  #data{height:92px} #assets{height:66px} #threat{height:56px} #alerts{height:60px}
   textarea:focus,input:focus,select:focus{outline:none;border-color:var(--internal)}
   input[type=text],input[type=number]{width:100%;background:var(--bg);color:var(--text);
     border:1px solid var(--line);border-radius:6px;padding:8px 10px;
@@ -159,6 +159,7 @@
       <label class="check"><input type="checkbox" id="labels" checked> 顯示標籤</label>
       <label class="check"><input type="checkbox" id="rings" checked> 顯示 hop 分層環</label>
       <label class="check"><input type="checkbox" id="onlyRogue"> 只顯示不在資產表的 IP</label>
+      <label class="check"><input type="checkbox" id="riskMode"> 告警風險模式(依嚴重度上色)</label>
 
       <details style="margin-top:14px">
         <summary>資產盤點表 (選填)</summary>
@@ -173,6 +174,14 @@
         <div class="inner">
           <div class="tinynote">每行一個 IP，命中者標紅發光，相關連線變紅。</div>
           <textarea id="threat" spellcheck="false" placeholder="45.140.17.3"></textarea>
+        </div>
+      </details>
+
+      <details>
+        <summary>告警疊圖 · Suricata (選填)</summary>
+        <div class="inner">
+          <div class="tinynote">每行 ip,嚴重度,告警名稱(1 最嚴重)。勾上方「告警風險模式」即依嚴重度上色。可用 get-so-alerts.ps1 產生。</div>
+          <textarea id="alerts" spellcheck="false" placeholder="10.20.0.199,1,ET MALWARE Cobalt Strike Beacon"></textarea>
         </div>
       </details>
 
@@ -298,6 +307,7 @@
     return "external";
   }
   const COLOR={focus:"#f0b24a",internal:"#46b7c9",external:"#e46f56",other:"#8a93a6"};
+  const SEV={1:"#ff4d5e",2:"#ff9d3d",3:"#f4d35e"};   // Suricata 嚴重度→色 (1 最嚴重)
   const fmt=n=>{n=Math.round(n);return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g,",");};
   const clsName=c=>({focus:"聚焦",internal:"內部",external:"外部",other:"其他"}[c]||c);
   const esc=s=>String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
@@ -428,6 +438,21 @@
   }
   const parseThreat=text=>new Set(text.split(/\r?\n/)
     .map(s=>s.trim().split(/[\s,]/)[0]).filter(x=>x&&x[0]!=="#"));
+  // Suricata 告警:每行 ip[,嚴重度][,告警名稱]。同 IP 多筆會彙總(取最嚴重、累計筆數、收集名稱)
+  function parseAlerts(text){
+    const m=new Map();
+    for(const raw of text.split(/\r?\n/)){
+      const line=raw.trim(); if(!line||line[0]==="#") continue;
+      const p=splitLine(line); const ip=p[0]; if(!ip||!/[.:]/.test(ip)) continue;
+      let sev=2, sig="";
+      if(p.length>=3){ const s=parseInt(p[1],10); if(!isNaN(s)) sev=s; sig=p.slice(2).join(",").trim(); }
+      else if(p.length===2){ const s=parseInt(p[1],10); if(!isNaN(s)&&s>=1&&s<=4) sev=s; else sig=p[1]; }
+      sev=Math.max(1,Math.min(3,sev));
+      let o=m.get(ip); if(!o){o={sev,count:0,sigs:[]};m.set(ip,o);}
+      o.count++; if(sev<o.sev) o.sev=sev; if(sig&&o.sigs.indexOf(sig)<0&&o.sigs.length<6) o.sigs.push(sig);
+    }
+    return m;
+  }
 
   // ===================== pcap / pcapng =====================
   const PORTSVC={104:"DICOM",2761:"DICOM",2762:"DICOM-TLS",11112:"DICOM",2575:"HL7",6661:"HL7",
@@ -571,13 +596,15 @@
     return nodes;
   }
   function applyThreshold(edges,th){ return (!th||th<=0)?edges:edges.filter(e=>e.w>=th); }
-  function annotate(nodes,amap,bad){
+  function annotate(nodes,amap,bad,alm){
     const has=amap&&amap.size>0;
     for(const n of nodes){
       if(has&&amap.has(n.ip)){const a=amap.get(n.ip);n.name=a.name;n.role=a.role;n.inInv=true;}
       else if(has && ipClass(n.ip)==="internal") n.inInv=false;  // 只有內網 IP 沒在表內才標「不在資產表」
       else n.inInv=null;                                         // 公有/其他 IP:不做未列管標記
       n.threat = bad.has(n.ip);
+      if(alm&&alm.has(n.ip)){const al=alm.get(n.ip);n.alertSev=al.sev;n.alertCount=al.count;n.alertSigs=al.sigs;}
+      else {n.alertSev=0;n.alertCount=0;n.alertSigs=null;}
     }
   }
 
@@ -642,6 +669,9 @@
     if(!nodes.length){ $("empty").style.display="flex"; return; }
     $("empty").style.display="none";
     const sizeBy=$("sizeBy").value, showLabels=$("labels").checked, showRings=$("rings").checked;
+    const riskOn = state.hasAlerts && $("riskMode").checked;
+    // 風險模式下把「有告警」與「命中威脅情資」都當作風險;威脅視為最嚴重(1)
+    const riskSev = n => { let s=n.alertSev||0; if(n.threat&&(s===0||s>1)) s=1; return s; };
     const maxV=Math.max(1,...nodes.map(n=>sizeBy==="degree"?n.deg:n.total));
     const maxW=Math.max(1,...edges.map(e=>e.w));
     const pos=new Map(nodes.map(n=>[n.ip,n]));
@@ -663,7 +693,7 @@
       }
     }
 
-    nodes.forEach(n=>{ n._r=scaleRadius(n,sizeBy,maxV); });
+    nodes.forEach(n=>{ n._r=scaleRadius(n,sizeBy,maxV); if(riskOn){const s=riskSev(n); if(s) n._r+=(4-s)*3;} });
 
     const seen=new Set();
     for(const e of edges){
@@ -678,7 +708,8 @@
       p.setAttribute("class","edge");
       p.setAttribute("stroke-width",edgeWidth(e.w,maxW));
       p.setAttribute("marker-end","url(#arrow)");
-      if(a.threat||b.threat){ p.setAttribute("stroke","#ff4d4d"); p.setAttribute("stroke-opacity","0.95"); }
+      const edgeRisk = a.threat||b.threat || (riskOn && (riskSev(a)===1||riskSev(b)===1));
+      if(edgeRisk){ p.setAttribute("stroke","#ff4d4d"); p.setAttribute("stroke-opacity","0.95"); }
       const lab=[...e.labels].filter(Boolean).join(", ");
       p.__tip=`${e.src} → ${e.dst}\n權重: ${fmt(e.w)}`+(e.pk?`  (${fmt(e.pk)} 封包)`:"")+(lab?`\n${lab}`:"");
       p.addEventListener("mouseenter",()=>{p.classList.add("hi");showTip(p.__tip);});
@@ -691,24 +722,47 @@
       const g=document.createElementNS(NS,"g"); g.setAttribute("class","node"); g.__node=n;
       const c=document.createElementNS(NS,"circle"); const r=n._r;
       c.setAttribute("cx",n.x); c.setAttribute("cy",n.y); c.setAttribute("r",r);
-      c.setAttribute("fill", n.threat ? "#ff4d4d" : (COLOR[n.cls]||COLOR.other));
-      if(n.threat){ c.setAttribute("stroke","#ff4d4d"); c.setAttribute("stroke-width","3");
-        c.style.filter="drop-shadow(0 0 5px #ff2d2d)"; }
-      else if(n.inInv===false) c.setAttribute("class","rogue");
-      else if(n.cls==="focus"){ c.setAttribute("stroke",COLOR.focus); c.setAttribute("stroke-width",2.5); }
-      // 越外層越淡，強化層次感
-      if(n.hop!=null&&n.hop>1) c.setAttribute("fill-opacity",String(Math.max(0.5,1-(n.hop-1)*0.16)));
+      if(riskOn){
+        const s=riskSev(n);
+        c.setAttribute("fill", s ? SEV[s] : "#39506b");        // 無告警 → 暗掉,讓風險跳出來
+        if(s===1){ c.setAttribute("stroke","#ff4d5e"); c.setAttribute("stroke-width","3");
+          c.style.filter="drop-shadow(0 0 6px #ff2d3d)"; }
+        else if(n.inInv===false){ c.setAttribute("class","rogue"); }
+        else { c.setAttribute("stroke","#0d1522"); c.setAttribute("stroke-width",s?2:1.5); }
+      }else{
+        c.setAttribute("fill", n.threat ? "#ff4d4d" : (COLOR[n.cls]||COLOR.other));
+        if(n.threat){ c.setAttribute("stroke","#ff4d4d"); c.setAttribute("stroke-width","3");
+          c.style.filter="drop-shadow(0 0 5px #ff2d2d)"; }
+        else if(n.inInv===false) c.setAttribute("class","rogue");
+        else if(n.cls==="focus"){ c.setAttribute("stroke",COLOR.focus); c.setAttribute("stroke-width",2.5); }
+        // 越外層越淡，強化層次感
+        if(n.hop!=null&&n.hop>1) c.setAttribute("fill-opacity",String(Math.max(0.5,1-(n.hop-1)*0.16)));
+      }
       g.appendChild(c);
       if(showLabels){
         const t=document.createElementNS(NS,"text");
         t.setAttribute("x",n.x); t.setAttribute("y",n.y-r-4); t.setAttribute("text-anchor","middle");
         t.textContent=n.name||n.ip; g.appendChild(t);
       }
+      if(riskOn && n.alertCount){
+        const bx=n.x+r*0.72, by=n.y-r*0.72, sc=SEV[Math.max(1,Math.min(3,n.alertSev||2))];
+        const bg=document.createElementNS(NS,"circle");
+        bg.setAttribute("cx",bx); bg.setAttribute("cy",by); bg.setAttribute("r",7.5);
+        bg.setAttribute("fill","#120a10"); bg.setAttribute("stroke",sc); bg.setAttribute("stroke-width","1.5");
+        bg.setAttribute("pointer-events","none"); g.appendChild(bg);
+        const bt=document.createElementNS(NS,"text");
+        bt.setAttribute("x",bx); bt.setAttribute("y",by+3.5); bt.setAttribute("text-anchor","middle");
+        bt.setAttribute("font-size","9.5"); bt.setAttribute("fill",sc);
+        bt.setAttribute("font-family","ui-monospace,monospace"); bt.setAttribute("pointer-events","none");
+        bt.textContent=n.alertCount>9?"9+":String(n.alertCount); g.appendChild(bt);
+      }
       let tt=`${n.name?n.name+"  ":""}${n.ip}  (${clsName(n.cls)})`;
       if(n.hop!=null) tt+=`\n距離聚焦: ${n.hop} 跳`;
       if(n.role) tt+=`\n角色: ${n.role}`;
       if(n.inInv===false) tt+=`\n⚠ 不在資產表`;
       if(n.threat) tt+=`\n🛑 命中威脅情資`;
+      if(n.alertCount){ tt+=`\n🚨 告警 ${n.alertCount} 筆 (嚴重度 ${n.alertSev})`;
+        if(n.alertSigs&&n.alertSigs.length) tt+="\n  "+n.alertSigs.slice(0,4).join("\n  "); }
       tt+=`\n總流量: ${fmt(n.total)}\n連線數: ${n.deg}  (出 ${fmt(n.outW)} / 入 ${fmt(n.inW)})`;
       g.__tip=tt;
       c.addEventListener("mouseenter",()=>showTip(tt));
@@ -778,13 +832,15 @@
     const th=parseFloat($("thresh").value)||0;
     const amap=parseAssets($("assets").value);
     const bad=parseThreat($("threat").value);
+    const alm=parseAlerts($("alerts").value);
 
     let edges=buildGraph(currentRaw);
     edges=applyThreshold(edges,th);
     const hf=hopFilter(edges,focus,hop);
     edges=hf.edges;
     const nodes=nodesFromEdges(edges,focus,hf.dist);
-    annotate(nodes,amap,bad);
+    annotate(nodes,amap,bad,alm);
+    state.hasAlerts = alm.size>0;
 
     // 「只顯示不在資產表的 IP」：只留內網未列管節點 (inInv===false) 與其間連線
     let vnodes=nodes, vedges=edges;
@@ -806,7 +862,7 @@
     alpha = heavy ? 0.25 : 1;
     if(heavy) status(`節點 ${vnodes.length} 個，已簡化排版。建議降低 hop 或提高「最小權重」讓圖更清楚。`,true);
     if(rafId){cancelAnimationFrame(rafId);rafId=null;} tick();
-    updateStats({nodes:vnodes,edges:vedges,focus,hop,amap,bad,hasFocus:!!focus&&vnodes.some(n=>n.ip===focus)});
+    updateStats({nodes:vnodes,edges:vedges,focus,hop,amap,bad,alm,hasFocus:!!focus&&vnodes.some(n=>n.ip===focus)});
     setTimeout(fit,1700);
   }
 
@@ -838,6 +894,20 @@
         if(hits.length>8) html+=`<br>&nbsp;…另 ${hits.length-8} 個`;
       }else{
         html+=`<br><br>威脅情資已載入 ${fmt(bad.size)} 筆，本圖無命中。`;
+      }
+    }
+    const alm=o.alm;
+    if(alm&&alm.size>0){
+      const al=nodes.filter(n=>n.alertCount>0).sort((a,b)=>(a.alertSev-b.alertSev)||(b.alertCount-a.alertCount));
+      if(al.length){
+        html+=`<br><br><b style="color:#ff9d3d">🚨 有告警的主機 ${al.length} 個：</b><br>`+
+          al.slice(0,8).map(n=>{const c=SEV[Math.max(1,Math.min(3,n.alertSev))];
+            return `&nbsp;<span style="color:${c}">${esc(n.ip)}</span>`+(n.name?` (${esc(n.name)})`:"")+
+              ` · sev${n.alertSev} ×${n.alertCount}`;}).join("<br>");
+        if(al.length>8) html+=`<br>&nbsp;…另 ${al.length-8} 個`;
+        if(!$("riskMode").checked) html+=`<br><span style="color:var(--muted)">勾「告警風險模式」可依嚴重度上色</span>`;
+      }else{
+        html+=`<br><br>告警已載入 ${fmt(alm.size)} 個 IP，本圖無命中。`;
       }
     }
     if(focus){
@@ -1110,6 +1180,8 @@
   $("thresh").addEventListener("change",()=>{ if(currentRaw.length) render(); });
   $("assets").addEventListener("change",()=>{ if(currentRaw.length) render(); });
   $("threat").addEventListener("change",()=>{ if(currentRaw.length) render(); });
+  $("alerts").addEventListener("change",()=>{ if(currentRaw.length) render(); });
+  $("riskMode").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
   $("sizeBy").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
   $("labels").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
   $("rings").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
@@ -1129,7 +1201,7 @@
   syncHop();
 
   if(typeof module!=="undefined"&&module.exports){
-    module.exports={parseCSV,parseESJson,parseJsonLines,parseAny,parseSession,parseAssets,parseThreat,parsePcap,gunzip,isGzip,isPcapBuf,
+    module.exports={parseCSV,parseESJson,parseJsonLines,parseAny,parseSession,parseAssets,parseThreat,parseAlerts,parsePcap,gunzip,isGzip,isPcapBuf,
       buildGraph,hopFilter,nodesFromEdges,applyThreshold,annotate,ipClass,layout};
   }
 })();

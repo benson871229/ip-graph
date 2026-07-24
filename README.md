@@ -100,6 +100,31 @@ curl -s https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt \
 產出的 `graph.csv` 拖進 `ip-graph.html` 即可生圖,hop / 資產表 / 威脅標記照常適用。
 瀏覽器 API 面板適合快速互動;這支腳本適合固定查詢、排程、或不想碰 CORS 的情況。
 
+### 告警疊圖 · 把 Suricata 告警畫上節點
+
+流量圖只回答「誰跟誰講話」;疊上告警,圖就從流量圖變成**風險圖** —— 節點依告警嚴重度上色,
+一眼看出哪些主機該先看,以及它連到誰。步驟:
+
+1. 用 `get-so-alerts.ps1` 帶帳密查 SO 的 Suricata 告警,輸出 `ip,嚴重度,告警名稱`:
+
+   ```powershell
+   .\get-so-alerts.ps1 -Server https://securityonion:9200 -Username analyst `
+       -Since now-24h -OutFile alerts.csv -SkipCertCheck
+   ```
+
+   預設過濾 `event.dataset:alert`、嚴重度取 `event.severity`、名稱取 `rule.name`;
+   不同 SO 版本可用 `-AlertFilter` / `-SevField` / `-SigField` 調整。
+
+2. 把 `alerts.csv` 內容整份貼進工具的「**告警疊圖 · Suricata**」欄位。
+3. 勾選「**告警風險模式(依嚴重度上色)**」。
+
+節點會依嚴重度上色(1 紅=最嚴重、2 橘、3 黃,無告警的暗掉),右上角小徽章顯示告警筆數,
+critical 節點發光、相關連線變紅,滑過節點可看到告警名稱。左下角列出有告警的主機。
+嚴重度沿用 Suricata 慣例(1 最嚴重)。
+
+> 這一步展示了 API 相對「只畫 conn.log 流量」的價值:告警那層資料在 Elasticsearch 裡,
+> `zeek-cut | awk` 的 conn.log 沒有,所以只有接 API 才畫得出這張風險圖。
+
 ### ⚠️ CORS(瀏覽器 API 面板才會遇到)
 
 瀏覽器從 `file://` 或不同來源打 ES/Kibana 會被 CORS 擋(錯誤訊息通常是 `Failed to fetch`)。
