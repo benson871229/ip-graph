@@ -87,6 +87,27 @@
   .stats{border-top:1px solid var(--line);padding:10px 18px;font-size:11.5px;
     color:var(--muted);font-family:var(--mono);line-height:1.7;max-height:190px;overflow-y:auto}
   .stats b{color:var(--text);font-weight:600}
+  /* 連線明細表 */
+  .dt{width:100%;border-collapse:collapse;font-size:11.5px;font-family:var(--sans)}
+  .dt tr{border-top:1px solid #1c2942}
+  .dt td{padding:6px 0;vertical-align:top}
+  .dt td.by{text-align:right;font-family:var(--mono);font-size:11px;color:var(--muted);
+    white-space:nowrap;font-variant-numeric:tabular-nums;padding-left:6px}
+  .dsec{margin:10px 0 2px;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;
+    color:var(--muted);display:flex;justify-content:space-between;align-items:baseline}
+  .dsec .c{font-family:var(--mono);text-transform:none;letter-spacing:0}
+  .dnm{font-size:12px;color:var(--text)}
+  .dip{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+  .dip.rg{color:var(--rogue)} .dip.th{color:var(--threat)}
+  .pts{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px}
+  .pt{font-family:var(--mono);font-size:10px;padding:1px 5px;border-radius:4px;
+    background:#1b2942;border:1px solid #2a3a56;color:#a9bcd6;white-space:nowrap}
+  .pt.unk{border-color:#4a3a22;background:#241d14;color:#d9a95f}
+  .pt.risk{border-color:#5a2230;background:#2a1119;color:#ff8a94}
+  .dmore{margin:6px 0 2px}
+  .dmore button{padding:4px 9px;font-size:11px}
+  .dback{float:right;font-size:11px;color:var(--internal);cursor:pointer;user-select:none}
+  .dback:hover{text-decoration:underline}
   .stats .hoprow{color:var(--text)}
 
   #stage{flex:1 1 auto;position:relative;height:100%}
@@ -159,6 +180,7 @@
       <label class="check"><input type="checkbox" id="labels" checked> 顯示標籤</label>
       <label class="check"><input type="checkbox" id="rings" checked> 顯示 hop 分層環</label>
       <label class="check"><input type="checkbox" id="onlyRogue"> 只顯示不在資產表的 IP</label>
+      <label class="check"><input type="checkbox" id="edgePort" checked> 選中節點的邊顯示 port</label>
       <label class="check"><input type="checkbox" id="diffOn" checked> 標記與基準相比的新增(綠色)</label>
       <label class="check"><input type="checkbox" id="onlyNew"> 只顯示新增的節點與流量</label>
       <label class="check" style="margin-left:23px"><input type="checkbox" id="strictNew"> └ 嚴格:只留新節點本身(不含連到的舊主機)</label>
@@ -412,7 +434,19 @@
     80:"HTTP",88:"Kerberos",110:"POP3",123:"NTP",135:"MS-RPC",139:"NetBIOS",143:"IMAP",161:"SNMP",
     389:"LDAP",443:"HTTPS",445:"SMB",636:"LDAPS",993:"IMAPS",1433:"MSSQL",3306:"MySQL",3389:"RDP",
     5432:"PostgreSQL",5900:"VNC",8080:"HTTP",8443:"HTTPS",20000:"DNP3",44818:"EtherNet/IP",47808:"BACnet"};
-  const serviceName=(sp,dp)=>PORTSVC[dp]||PORTSVC[sp]||"";
+  // 醫療網路裡出現在不該出現的路徑上就值得看的服務
+  const RISKY=new Set([22,23,135,139,445,3389,5900]);
+  // 標籤一律「埠號 服務名」;查不到就「埠號 unknown」,非標準 port 才不會消失
+  const portLabel=p=>{p=+p; if(!p||p<0||p>65535) return ""; return PORTSVC[p]?(p+" "+PORTSVC[p]):(p+" unknown");};
+  function serviceName(sp,dp){
+    if(PORTSVC[dp]) return portLabel(dp);
+    if(PORTSVC[sp]) return portLabel(sp);
+    // 兩邊都不認得:高位的多半是隨機的來源埠,取較小的那個當服務埠
+    const p=(sp&&dp)?Math.min(sp,dp):(dp||sp);
+    return p?portLabel(p):"";
+  }
+  // 純數字的標籤(Kibana 的 destination.port、Zeek 的 id.resp_p)也轉成同一格式
+  const normLabel=s=>{const t=String(s).trim(); return /^\d{1,5}$/.test(t)?portLabel(t):t;};
   const ip4=(dv,o)=>dv.getUint8(o)+"."+dv.getUint8(o+1)+"."+dv.getUint8(o+2)+"."+dv.getUint8(o+3);
   function ip6(dv,o){
     const p=[]; for(let i=0;i<8;i++) p.push(dv.getUint16(o+i*2,false));
@@ -512,7 +546,7 @@
       let o=emap.get(k);
       if(!o){o={src:e.src,dst:e.dst,w:0,pk:0,labels:new Set()};emap.set(k,o);}
       o.w+=e.w; o.pk+=(e.pk||0);
-      if(e.label) String(e.label).split(", ").forEach(l=>l&&o.labels.add(l));
+      if(e.label) String(e.label).split(", ").forEach(l=>l&&o.labels.add(normLabel(l)));
     }
     return [...emap.values()];
   }
@@ -665,6 +699,27 @@
       p.addEventListener("mousemove",moveTip);
       p.addEventListener("mouseleave",()=>{p.classList.remove("hi");hideTip();});
       vp.appendChild(p);
+      // 選中節點時:它的邊highlight,其餘淡出;只有它的邊標 port,圖才不會變毛球
+      if(selNode){
+        const on=(e.src===selNode||e.dst===selNode);
+        p.setAttribute("stroke-opacity", on?"1":"0.15");
+        if(on){
+          p.setAttribute("stroke","#86b4e6");
+          if($("edgePort").checked){
+            const txt=[...e.labels].filter(Boolean).slice(0,3)
+              .map(l=>{const m=/^(\d{1,5})\s+(.+)$/.exec(l); return m?(m[2]==="unknown"?m[1]:m[2]):l;}).join(",");
+            if(txt){
+              const t=document.createElementNS(NS,"text");
+              t.setAttribute("x",(a.x+ex)/2); t.setAttribute("y",(a.y+ey)/2-3);
+              t.setAttribute("text-anchor","middle"); t.setAttribute("font-size","9.5");
+              t.setAttribute("fill","#a9c8ea"); t.setAttribute("font-family","ui-monospace,monospace");
+              t.setAttribute("paint-order","stroke"); t.setAttribute("stroke","#0d1522");
+              t.setAttribute("stroke-width","3.5"); t.setAttribute("pointer-events","none");
+              t.textContent=txt; vp.appendChild(t);
+            }
+          }
+        }
+      }
     }
 
     for(const n of nodes){
@@ -680,6 +735,7 @@
       else if(n.cls==="focus"){ c.setAttribute("stroke",COLOR.focus); c.setAttribute("stroke-width",2.5); }
       // 越外層越淡，強化層次感
       if(n.hop!=null&&n.hop>1) c.setAttribute("fill-opacity",String(Math.max(0.5,1-(n.hop-1)*0.16)));
+      if(selNode===n.ip){ c.setAttribute("stroke",COLOR.focus); c.setAttribute("stroke-width","3.5"); }
       g.appendChild(c);
       if(showLabels){
         const t=document.createElementNS(NS,"text");
@@ -715,6 +771,7 @@
 
   const ptrs=new Map(); let dragNode=null,panning=false,panStart=null,pinch=null;
   let lastTap={ip:null,t:0};   // 雙擊/雙點偵測:記住上次點的節點 IP 與時間
+  let downAt=null;             // 單擊偵測:按下的位置,放開時沒移動才算點選
   const pdist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
   svg.addEventListener("pointerdown",ev=>{
     try{svg.setPointerCapture(ev.pointerId);}catch(e){}
@@ -725,11 +782,12 @@
       const now=Date.now();
       // 雙擊(或觸控雙點)同一節點 → 設為聚焦 IP。用 IP 判斷,不受節點重繪影響
       if(lastTap.ip===g.__node.ip && now-lastTap.t<350){
-        lastTap={ip:null,t:0}; dragNode=null; hideTip();
+        lastTap={ip:null,t:0}; dragNode=null; downAt=null; hideTip();
         $("focus").value=g.__node.ip; if(currentRaw.length) render(); return;
       }
       lastTap={ip:g.__node.ip,t:now};
       dragNode=g.__node; dragNode.pinned=true; showTip(g.__tip); tipAt(ev.clientX,ev.clientY);
+      downAt={x:ev.clientX,y:ev.clientY,ip:g.__node.ip};   // 用來判斷「按下沒移動」= 單擊
     }
     else if(ev.target.classList&&ev.target.classList.contains("edge")){ showTip(ev.target.__tip); tipAt(ev.clientX,ev.clientY); }
     else { hideTip(); panning=true; svg.classList.add("grabbing");
@@ -744,6 +802,11 @@
       state.transform.y=panStart.ty+(ev.clientY-panStart.y);applyT();}
   });
   function endPtr(ev){ ptrs.delete(ev.pointerId); if(ptrs.size<2) pinch=null;
+    // 按下到放開幾乎沒移動 -> 視為單擊,開啟該節點的連線明細(拖曳節點時不觸發)
+    if(downAt&&Math.hypot(ev.clientX-downAt.x,ev.clientY-downAt.y)<5){
+      const ip=downAt.ip; hideTip(); showDetail(ip); draw();
+    }
+    downAt=null;
     if(dragNode){ if(dragNode.ip!==state.focus) dragNode.pinned=false; dragNode=null; }
     if(ptrs.size===0){ panning=false; svg.classList.remove("grabbing"); } }
   svg.addEventListener("pointerup",endPtr);
@@ -807,6 +870,7 @@
     }
 
     state.nodes=vnodes; state.edges=vedges; state.focus=focus; state.transform={k:1,x:0,y:0};
+    if(selNode && !vnodes.some(n=>n.ip===selNode)) selNode=null;
     const W=stage.clientWidth,H=stage.clientHeight;
     stepFn=layout(vnodes,vedges,focus,W,H);
     // 節點過多時：斥力計算是 O(n²)，減少迭代避免瀏覽器卡死 (初始已依 hop 分層排好)
@@ -819,7 +883,69 @@
     setTimeout(fit,1700);
   }
 
+  // ===================== 連線明細 (單擊節點) =====================
+  // 圖上不畫 port,明細改在左下角以表格展開:入站/出站分開、一個對方一列、port 並排
+  let selNode=null, selMore={in:false,out:false};
+  const fmtBytes=n=>{n=+n||0;
+    return n>=1048576?(n/1048576).toFixed(1)+" MB":(n>=1024?(n/1024).toFixed(0)+" KB":Math.round(n)+"");};
+  function portChip(l){
+    const m=/^(\d{1,5})\s+(.+)$/.exec(l);
+    let cls="pt";
+    if(m){ const p=+m[1]; if(m[2]==="unknown") cls="pt unk"; else if(RISKY.has(p)) cls="pt risk"; }
+    return `<span class="${cls}">${esc(l)}</span>`;
+  }
+  function peerRows(list,dir){
+    const TOP=6, show=selMore[dir]?list:list.slice(0,TOP);
+    let h='<table class="dt"><tbody>';
+    for(const p of show){
+      const n=p.node||{};
+      const cls=n.threat?"th":(n.inInv===false?"rg":"");
+      const mark=n.threat?"🛑 ":(n.inInv===false?"⚠ ":"");
+      const chips=[...p.labels].filter(Boolean).sort().map(portChip).join("");
+      h+=`<tr><td><div class="dnm">${mark}${esc(n.name||p.ip)}</div>`+
+         `<div class="dip ${cls}">${esc(p.ip)}</div>`+
+         (chips?`<div class="pts">${chips}</div>`:"")+`</td>`+
+         `<td class="by">${fmtBytes(p.w)}</td></tr>`;
+    }
+    h+='</tbody></table>';
+    if(list.length>TOP&&!selMore[dir])
+      h+=`<div class="dmore"><button data-more="${dir}">顯示全部 ${list.length} 個</button></div>`;
+    return h;
+  }
+  // 選中節點 -> 在左下角列出入站/出站對象與各自使用的 port
+  function showDetail(ip,keepMore){
+    selNode=ip;
+    if(!keepMore) selMore={in:false,out:false};
+    const el=$("stats"), n=state.nodes.find(x=>x.ip===ip);
+    if(!n){ selNode=null; updateStats(lastStats); return; }
+    const inb=new Map(), outb=new Map();
+    const put=(m,peer,e)=>{ let o=m.get(peer);
+      if(!o){o={ip:peer,w:0,labels:new Set(),node:state.nodes.find(x=>x.ip===peer)||{}};m.set(peer,o);}
+      o.w+=e.w; e.labels.forEach(l=>l&&o.labels.add(l)); };
+    for(const e of state.edges){
+      if(e.dst===ip) put(inb,e.src,e);
+      if(e.src===ip) put(outb,e.dst,e);
+    }
+    const I=[...inb.values()].sort((a,b)=>b.w-a.w), O=[...outb.values()].sort((a,b)=>b.w-a.w);
+    let h=`<span class="dback" id="dback">← 返回總覽</span>`+
+      `<b>${esc(n.name||n.ip)}</b><br><span style="color:var(--muted)">${esc(n.ip)}`+
+      (n.role?" · "+esc(n.role):"")+`</span><br>總流量 ${fmt(n.total)} ・ 連線數 ${n.deg}`;
+    if(n.inInv===false) h+=`<br><span style="color:var(--rogue)">⚠ 不在資產表</span>`;
+    if(n.threat) h+=`<br><span style="color:var(--threat)">🛑 命中威脅情資</span>`;
+    h+=`<div class="dsec">入站 · 誰連進來<span class="c">${I.length} 個來源</span></div>`;
+    h+= I.length?peerRows(I,"in"):'<span style="color:var(--muted)">沒有入站連線。</span>';
+    h+=`<div class="dsec">出站 · 這台連出去<span class="c">${O.length} 個目的</span></div>`;
+    h+= O.length?peerRows(O,"out"):'<span style="color:var(--muted)">沒有出站連線。</span>';
+    el.innerHTML=h;
+    const bk=$("dback");
+    if(bk) bk.addEventListener("click",()=>{ selNode=null; draw(); updateStats(lastStats); });
+    el.querySelectorAll("[data-more]").forEach(b=>
+      b.addEventListener("click",()=>{ selMore[b.dataset.more]=true; showDetail(ip,true); }));
+  }
+
+  let lastStats=null;
   function updateStats(o){
+    lastStats=o;
     if(!o||!o.nodes.length){
       $("stats").innerHTML = o&&o.focus&&!o.hasFocus
         ? `<b style="color:var(--external)">找不到 ${esc(o.focus)}</b><br>該 IP 不在這批資料中。`
@@ -1000,7 +1126,7 @@
           let o=agg.get(k);
           if(!o){o={src:e.src,dst:e.dst,w:0,pk:0,labels:new Set()};agg.set(k,o);}
           o.w+=e.w; o.pk+=(e.pk||0);
-          if(e.label) String(e.label).split(", ").forEach(l=>l&&o.labels.add(l));
+          if(e.label) String(e.label).split(", ").forEach(l=>l&&o.labels.add(normLabel(l)));
         }
         okCount++;
       }catch(err){ failCount++; }
@@ -1075,6 +1201,7 @@
   $("labels").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
   $("rings").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
   $("onlyRogue").addEventListener("change",()=>{ if(currentRaw.length) render(); });
+  $("edgePort").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
   $("renderPaste").addEventListener("click",()=>{ currentRaw=parseAny($("data").value)||[];
     status(`已解析：${currentRaw.length} 條連線`); render(); });
   $("sample").addEventListener("click",()=>{
@@ -1084,7 +1211,7 @@
   $("fit").addEventListener("click",fit);
   // 清空連線圖以便重新匯入;刻意保留資產表、威脅情資與各項設定,不必重新輸入
   $("clear").addEventListener("click",()=>{
-    currentRaw=[];
+    currentRaw=[]; selNode=null;
     if(rafId){cancelAnimationFrame(rafId);rafId=null;}
     stepFn=null; alpha=0;
     state.nodes=[]; state.edges=[]; state.transform={k:1,x:0,y:0};
