@@ -10,6 +10,7 @@
     --text:#cdd8e8; --muted:#7f8fa6;
     --focus:#f0b24a; --internal:#46b7c9; --external:#e46f56; --other:#8a93a6;
     --rogue:#d76ad7; --threat:#ff4d4d; --edge:#38486a; --edgehi:#86b4e6;
+    --fresh:#3fd68a;
     --mono:ui-monospace,"Cascadia Code","Consolas","SF Mono",Menlo,monospace;
     --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans TC",sans-serif;
   }
@@ -158,6 +159,8 @@
       <label class="check"><input type="checkbox" id="labels" checked> 顯示標籤</label>
       <label class="check"><input type="checkbox" id="rings" checked> 顯示 hop 分層環</label>
       <label class="check"><input type="checkbox" id="onlyRogue"> 只顯示不在資產表的 IP</label>
+      <label class="check"><input type="checkbox" id="diffOn" checked> 標記與基準相比的新增(綠色)</label>
+      <label class="check"><input type="checkbox" id="onlyNew"> 只顯示新增的節點與流量</label>
 
       <details style="margin-top:14px">
         <summary>資產盤點表 (選填)</summary>
@@ -196,6 +199,7 @@
       <div class="item"><span class="dot" style="background:var(--external)"></span>外部公有 IP</div>
       <div class="item"><span class="dot ring"></span>不在資產表</div>
       <div class="item"><span class="dot" style="background:var(--threat)"></span>命中威脅情資</div>
+      <div class="item"><span class="dot" style="background:var(--fresh)"></span>基準沒有的新節點/新流量</div>
     </div>
     <div class="stats" id="stats">拖入檔案後選聚焦 IP，再拉 hop 決定要看幾層關聯。</div>
   </div>
@@ -204,6 +208,7 @@
     <div id="toolbar">
       <button id="fit">重置視圖</button>
       <button id="clear" title="清除連線圖以便重新匯入(保留資產表與威脅情資)">清空重來</button>
+      <button id="base" title="把目前這張圖記成基準。之後匯入新資料時,基準沒有的節點與連線會標成綠色">設為基準</button>
       <button id="save">儲存工作階段</button>
       <button id="dl">下載 SVG</button>
     </div>
@@ -597,6 +602,8 @@
   // ===================== 繪製 =====================
   let state={nodes:[],edges:[],focus:"",transform:{k:1,x:0,y:0}};
   let rafId=null,alpha=0,stepFn=null,currentRaw=[];
+  // 基準線:記住「設為基準」當下有哪些 IP 與哪些 src→dst 配對,之後用來找新增
+  let baseline=null;   // {ips:Set, pairs:Set, at:Date, n:節點數, e:連線數}
 
   const scaleRadius=(n,sizeBy,maxV)=>{
     const v=sizeBy==="degree"?n.deg:n.total;
@@ -648,8 +655,9 @@
       p.setAttribute("stroke-width",edgeWidth(e.w,maxW));
       p.setAttribute("marker-end","url(#arrow)");
       if(a.threat||b.threat){ p.setAttribute("stroke","#ff4d4d"); p.setAttribute("stroke-opacity","0.95"); }
+      else if(e.isNew){ p.setAttribute("stroke","#3fd68a"); p.setAttribute("stroke-opacity","0.95"); }  // 新流量
       const lab=[...e.labels].filter(Boolean).join(", ");
-      p.__tip=`${e.src} → ${e.dst}\n權重: ${fmt(e.w)}`+(e.pk?`  (${fmt(e.pk)} 封包)`:"")+(lab?`\n${lab}`:"");
+      p.__tip=`${e.src} → ${e.dst}\n權重: ${fmt(e.w)}`+(e.pk?`  (${fmt(e.pk)} 封包)`:"")+(lab?`\n${lab}`:"")+(e.isNew?`\n🆕 基準沒有的新流量`:"");
       p.addEventListener("mouseenter",()=>{p.classList.add("hi");showTip(p.__tip);});
       p.addEventListener("mousemove",moveTip);
       p.addEventListener("mouseleave",()=>{p.classList.remove("hi");hideTip();});
@@ -663,6 +671,8 @@
       c.setAttribute("fill", n.threat ? "#ff4d4d" : (COLOR[n.cls]||COLOR.other));
       if(n.threat){ c.setAttribute("stroke","#ff4d4d"); c.setAttribute("stroke-width","3");
         c.style.filter="drop-shadow(0 0 5px #ff2d2d)"; }
+      else if(n.isNew){ c.setAttribute("stroke","#3fd68a"); c.setAttribute("stroke-width","3");
+        c.style.filter="drop-shadow(0 0 5px #2fbf76)"; }   // 基準沒有的新節點
       else if(n.inInv===false) c.setAttribute("class","rogue");
       else if(n.cls==="focus"){ c.setAttribute("stroke",COLOR.focus); c.setAttribute("stroke-width",2.5); }
       // 越外層越淡，強化層次感
@@ -678,6 +688,7 @@
       if(n.role) tt+=`\n角色: ${n.role}`;
       if(n.inInv===false) tt+=`\n⚠ 不在資產表`;
       if(n.threat) tt+=`\n🛑 命中威脅情資`;
+      if(n.isNew) tt+=`\n🆕 基準沒有的新節點`;
       tt+=`\n總流量: ${fmt(n.total)}\n連線數: ${n.deg}  (出 ${fmt(n.outW)} / 入 ${fmt(n.inW)})`;
       g.__tip=tt;
       c.addEventListener("mouseenter",()=>showTip(tt));
@@ -755,6 +766,11 @@
     const nodes=nodesFromEdges(edges,focus,hf.dist);
     annotate(nodes,amap,bad);
 
+    // 與基準比較：標出基準沒有的節點 (isNew) 與連線 (isNew)
+    const diffOn = !!baseline && $("diffOn").checked;
+    for(const n of nodes) n.isNew = diffOn && !baseline.ips.has(n.ip);
+    for(const e of edges) e.isNew = diffOn && !baseline.pairs.has(e.src+"\u0000"+e.dst);
+
     // 「只顯示不在資產表的 IP」：只留內網未列管節點 (inInv===false) 與其間連線
     let vnodes=nodes, vedges=edges;
     if($("onlyRogue").checked){
@@ -767,6 +783,19 @@
       }
     }
 
+    // 「只顯示新增的節點與流量」：保留新連線,以及新節點兩端相關的連線
+    if($("onlyNew").checked){
+      if(diffOn){
+        const keepE=vedges.filter(e=>e.isNew||
+          (vnodes.find(n=>n.ip===e.src)||{}).isNew||(vnodes.find(n=>n.ip===e.dst)||{}).isNew);
+        const keepIp=new Set(); keepE.forEach(e=>{keepIp.add(e.src);keepIp.add(e.dst);});
+        vnodes=vnodes.filter(n=>keepIp.has(n.ip)||n.isNew);
+        vedges=keepE;
+      }else{
+        status(baseline?"「只顯示新增」需同時勾選「標記與基準相比的新增」。":"請先按右上角「設為基準」記下基準圖,才能比較新增。",true);
+      }
+    }
+
     state.nodes=vnodes; state.edges=vedges; state.focus=focus; state.transform={k:1,x:0,y:0};
     const W=stage.clientWidth,H=stage.clientHeight;
     stepFn=layout(vnodes,vedges,focus,W,H);
@@ -775,7 +804,8 @@
     alpha = heavy ? 0.25 : 1;
     if(heavy) status(`節點 ${vnodes.length} 個，已簡化排版。建議降低 hop 或提高「最小權重」讓圖更清楚。`,true);
     if(rafId){cancelAnimationFrame(rafId);rafId=null;} tick();
-    updateStats({nodes:vnodes,edges:vedges,focus,hop,amap,bad,hasFocus:!!focus&&vnodes.some(n=>n.ip===focus)});
+    updateStats({nodes:vnodes,edges:vedges,focus,hop,amap,bad,baseInfo:diffOn?baseline:null,
+      hasFocus:!!focus&&vnodes.some(n=>n.ip===focus)});
     setTimeout(fit,1700);
   }
 
@@ -795,6 +825,15 @@
       [...byHop.keys()].sort((a,b)=>a-b).forEach(h=>{
         html+=`&nbsp;${h===0?"聚焦":h+" 跳"} · <b>${byHop.get(h)}</b><br>`;
       });
+    }
+    if(o.baseInfo){
+      const nn=nodes.filter(n=>n.isNew), ne=edges.filter(e=>e.isNew);
+      html+=`<br><br><span style="color:var(--fresh)">與基準比較</span>（基準 ${o.baseInfo.n} 點 / ${o.baseInfo.e} 線）<br>`;
+      if(nn.length||ne.length){
+        html+=`&nbsp;新節點 <b style="color:var(--fresh)">${nn.length}</b> ・ 新流量 <b style="color:var(--fresh)">${ne.length}</b>`;
+        if(nn.length) html+=`<br>`+nn.slice(0,6).map(n=>`&nbsp;<span style="color:var(--fresh)">${esc(n.ip)}</span>`+(n.name?` (${esc(n.name)})`:"")).join("<br>")+
+          (nn.length>6?`<br>&nbsp;…另 ${nn.length-6} 個`:"");
+      }else html+=`&nbsp;沒有新增,與基準相同。`;
     }
     const rogue=nodes.filter(n=>n.inInv===false).length;
     if(amap&&amap.size>0&&rogue) html+=`<br><b style="color:var(--rogue)">${rogue}</b> 個不在資產表`;
@@ -1033,8 +1072,20 @@
     state.nodes=[]; state.edges=[]; state.transform={k:1,x:0,y:0};
     $("data").value="";
     draw(); updateStats(null);
-    status("已清空連線圖,資產表與威脅情資保留。可直接拖入新檔或貼上資料重新匯入。");
+    status("已清空連線圖,資產表、威脅情資與基準保留。可直接拖入新檔或貼上資料重新匯入。");
   });
+  // 把目前這張圖記成基準;之後匯入的新資料會用它比對出新節點與新流量
+  $("base").addEventListener("click",()=>{
+    if(!currentRaw.length){ status("目前沒有圖可設為基準,請先匯入資料。",true); return; }
+    const all=buildGraph(currentRaw);
+    const ips=new Set(), pairs=new Set();
+    for(const e of all){ ips.add(e.src); ips.add(e.dst); pairs.add(e.src+"\u0000"+e.dst); }
+    baseline={ips,pairs,at:new Date(),n:ips.size,e:pairs.size};
+    status(`已設為基準:${fmt(ips.size)} 個 IP、${fmt(pairs.size)} 條連線。再匯入新資料即可看出新增(綠色)。`);
+    if(state.nodes.length) render();
+  });
+  $("diffOn").addEventListener("change",()=>{ if(currentRaw.length) render(); });
+  $("onlyNew").addEventListener("change",()=>{ if(currentRaw.length) render(); });
   $("save").addEventListener("click",saveSession);
   $("dl").addEventListener("click",downloadSVG);
   window.addEventListener("resize",()=>{ if(state.nodes.length) draw(); });
