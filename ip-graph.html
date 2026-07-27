@@ -346,6 +346,25 @@
     let prtI=-1;
     if(si>=0&&di>=0){ sI=si;dI=di;wI=colIdx(header,BY);wI2=colIdx(header,BY2);labI=colIdx(header,LAB);
       prtI=colIdx(header,PRT); start=zh?0:1; }
+    else{
+      // 沒有標題列 (zeek-cut 輸出、awk 產的 CSV):靠內容猜哪一欄是流量、port、服務名
+      const samp=rows.slice(0,50).filter(r=>r.length>2);
+      const ncol=Math.max(...samp.map(r=>r.length),0);
+      let bytesC=-1,portC=-1,textC=-1,bestMax=-1;
+      for(let c=2;c<ncol;c++){
+        let num=0,txt=0,mx=0,tot=0;
+        for(const r of samp){ const v=(r[c]||"").trim(); if(!v) continue; tot++;
+          if(/^\d+(\.\d+)?$/.test(v)){ num++; mx=Math.max(mx,parseFloat(v)); } else txt++; }
+        if(!tot) continue;
+        if(num/tot>=0.8){
+          if(mx>65535){ if(mx>bestMax){bestMax=mx;bytesC=c;} }        // 值很大 -> 流量
+          else if(portC<0) portC=c;                                    // 都在 port 範圍 -> 埠號
+        }else if(txt/tot>=0.6&&textC<0) textC=c;                       // 多為文字 -> 服務名
+      }
+      // 流量欄沒把握時沿用文件的第 3 欄;若第 3 欄其實是 port,就別拿它當流量
+      if(bytesC<0) bytesC=(portC===2?-1:2);
+      wI=bytesC; prtI=portC; labI=textC;
+    }
     const edges=[];
     for(let r=start;r<rows.length;r++){
       const p=rows[r];
