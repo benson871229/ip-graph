@@ -340,12 +340,14 @@
     const BY2=["resp_ip_bytes","destination.bytes"];
     const LAB=["service","network.protocol","proto","app"];
     const PRT=["id.resp_p","destination.port","dest_port","dstport","resp_p","server.port"];
+    const PRO=["proto","network.transport","ip_proto","protocol"];
+    const OPR=["id.orig_p","source.port","src_port","sport","orig_p"];
     const header = zh ? zh : rows[0].map(s=>String(s).toLowerCase());
     const si=colIdx(header,SRC), di=colIdx(header,DST);
     let sI=0,dI=1,wI=2,wI2=-1,labI=3,start=0;
-    let prtI=-1;
+    let prtI=-1,proI=-1,oprI=-1;
     if(si>=0&&di>=0){ sI=si;dI=di;wI=colIdx(header,BY);wI2=colIdx(header,BY2);labI=colIdx(header,LAB);
-      prtI=colIdx(header,PRT); start=zh?0:1; }
+      prtI=colIdx(header,PRT); proI=colIdx(header,PRO); oprI=colIdx(header,OPR); start=zh?0:1; }
     else{
       // 沒有標題列 (zeek-cut 輸出、awk 產的 CSV):靠內容猜哪一欄是流量、port、服務名
       const samp=rows.slice(0,50).filter(r=>r.length>2);
@@ -375,7 +377,9 @@
       if(wI2>=0&&p[wI2]!=null&&p[wI2]!==""){const n2=parseFloat(String(p[wI2]).replace(/[, ]/g,""));if(!isNaN(n2))w+=n2;}
       const svc=(labI>=0&&p[labI]!=null)?String(p[labI]).trim():"";
       const prt=(prtI>=0&&p[prtI]!=null)?String(p[prtI]).trim():"";
-      const label=(svc||prt)?svcWithPort(svc,prt):"";
+      const pro=(proI>=0&&p[proI]!=null)?String(p[proI]).trim():"";
+      const opr=(oprI>=0&&p[oprI]!=null)?String(p[oprI]).trim():"";
+      const label=(svc||prt||pro)?svcWithPort(svc,prt,pro,opr):"";
       edges.push({src,dst,w,label:(label==="-"?"":label)});
     }
     return edges;
@@ -452,7 +456,9 @@
       const pick=v=>(v==null||v===""||v==="-")?null:v;      // Zeek 用 "-" 表示空值
       const svc=pick(o.service)||pick(o.proto)||pick(o["network.protocol"])||"";
       const prt=pick(o["id.resp_p"])||pick(o["destination.port"])||pick(o.resp_p)||"";
-      const label=svcWithPort(svc,prt);
+      const pro=pick(o.proto)||pick(o["network.transport"])||"";
+      const opr=pick(o["id.orig_p"])||pick(o["source.port"])||"";
+      const label=svcWithPort(svc,prt,pro,opr);
       edges.push({src,dst,w,label:String(label)});
     }
     return edges.length?edges:null;
@@ -534,9 +540,22 @@
   }
   // 純數字的標籤(Kibana 的 destination.port、Zeek 的 id.resp_p)也轉成同一格式
   const normLabel=s=>{const t=String(s).trim(); return /^\d{1,5}$/.test(t)?portLabel(t):t;};
+  // ICMP 沒有 port。Zeek 會把 ICMP type 塞進 id.orig_p、code 塞進 id.resp_p,
+  // 直接當埠號會變成「3 icmp」這種誤導的標籤,所以獨立處理。
+  const ICMPTYPE={0:"Echo Reply",3:"目的不可達",4:"Source Quench",5:"Redirect",8:"Echo Request",
+    9:"Router Ad",10:"Router Sol",11:"逾時(Time Exceeded)",12:"參數錯誤",13:"Timestamp",
+    14:"Timestamp Reply",17:"Address Mask",18:"Address Mask Reply"};
+  const isICMP=s=>/^icmp/i.test(String(s||"").trim());
   // 服務名 + 埠號合併成一個標籤。內建認得的埠一律用內建名稱,來源不同才不會出現兩種寫法
-  function svcWithPort(name,port){
+  function svcWithPort(name,port,proto,origPort){
     const p=+port, nm=(name==null?"":String(name).trim());
+    // ICMP:port 欄位其實是 type/code,不能當埠號。Zeek 的 id.orig_p 才是 type
+    if(isICMP(proto)||isICMP(nm)){
+      const raw=(origPort==null?"":String(origPort).trim());
+      if(!/^\d+$/.test(raw)) return "ICMP";        // 沒有 type 欄位就不要瞎猜
+      const t=+raw;
+      return ICMPTYPE[t] ? ("ICMP "+t+" "+ICMPTYPE[t]) : ("ICMP type "+t);
+    }
     const valid=p>0&&p<=65535;
     if(valid&&PORTSVC[p]) return portLabel(p);          // 104 DICOM
     if(valid&&nm&&nm!=="-") return p+" "+nm;            // 8291 winbox
@@ -569,12 +588,15 @@
       const src=ip4(dv,p+12), dst=ip4(dv,p+16);
       let sp=0,dp=0,l4=p+ihl;
       if((proto===6||proto===17)&&l4+4<=end){ sp=dv.getUint16(l4,false); dp=dv.getUint16(l4+2,false); }
+      // ICMP 沒有 port,第 1 個位元組是 type
+      if(proto===1&&l4<end){ add(src,dst,orig||len,svcWithPort("","","icmp",dv.getUint8(l4))); return; }
       add(src,dst,orig||len,serviceName(sp,dp));
     }else if(etype===0x86dd){
       if(plen<40) return;
       const nh=dv.getUint8(p+6), src=ip6(dv,p+8), dst=ip6(dv,p+24);
       let sp=0,dp=0,l4=p+40;
       if((nh===6||nh===17)&&l4+4<=end){ sp=dv.getUint16(l4,false); dp=dv.getUint16(l4+2,false); }
+      if(nh===58&&l4<end){ add(src,dst,orig||len,"ICMPv6"); return; }
       add(src,dst,orig||len,serviceName(sp,dp));
     }
   }
