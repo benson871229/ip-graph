@@ -207,7 +207,7 @@
   <div id="stage">
     <div id="toolbar">
       <button id="fit">重置視圖</button>
-      <button id="clear" title="清除連線圖以便重新匯入(保留資產表與威脅情資)">清空重來</button>
+      <button id="clear" title="清除連線圖與基準線以便重新匯入(僅保留資產表與威脅情資)">清空重來</button>
       <button id="base" title="把目前這張圖記成基準。之後匯入新資料時,基準沒有的節點與連線會標成綠色">設為基準</button>
       <button id="save">儲存工作階段</button>
       <button id="dl">下載 SVG</button>
@@ -1071,8 +1071,9 @@
     stepFn=null; alpha=0;
     state.nodes=[]; state.edges=[]; state.transform={k:1,x:0,y:0};
     $("data").value="";
+    baseline=null;
     draw(); updateStats(null);
-    status("已清空連線圖,資產表、威脅情資與基準保留。可直接拖入新檔或貼上資料重新匯入。");
+    status("已清空連線圖與基準,資產表與威脅情資保留。可直接拖入新檔或貼上資料重新匯入。");
   });
   // 把目前這張圖記成基準;之後匯入的新資料會用它比對出新節點與新流量
   $("base").addEventListener("click",()=>{
