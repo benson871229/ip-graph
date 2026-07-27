@@ -473,13 +473,56 @@
     .map(s=>s.trim().split(/[\s,]/)[0]).filter(x=>x&&x[0]!=="#"));
 
   // ===================== pcap / pcapng =====================
-  const PORTSVC={104:"DICOM",2761:"DICOM",2762:"DICOM-TLS",11112:"DICOM",2575:"HL7",6661:"HL7",
-    1883:"MQTT",8883:"MQTT-TLS",22:"SSH",23:"Telnet",25:"SMTP",53:"DNS",67:"DHCP",68:"DHCP",
-    80:"HTTP",88:"Kerberos",110:"POP3",123:"NTP",135:"MS-RPC",139:"NetBIOS",143:"IMAP",161:"SNMP",
-    389:"LDAP",443:"HTTPS",445:"SMB",636:"LDAPS",993:"IMAPS",1433:"MSSQL",3306:"MySQL",3389:"RDP",
-    5432:"PostgreSQL",5900:"VNC",8080:"HTTP",8443:"HTTPS",20000:"DNP3",44818:"EtherNet/IP",47808:"BACnet"};
+  // 服務對照表:要新增就直接加「埠號:"名稱"」。不限醫療場域,涵蓋常見企業服務。
+  const PORTSVC={
+    // --- 基本網路 / 網際網路 ---
+    20:"FTP-Data",21:"FTP",22:"SSH",23:"Telnet",25:"SMTP",37:"Time",42:"WINS",43:"WHOIS",
+    49:"TACACS+",53:"DNS",67:"DHCP",68:"DHCP",69:"TFTP",79:"Finger",80:"HTTP",88:"Kerberos",
+    102:"S7comm/ISO-TSAP",110:"POP3",111:"RPCbind",119:"NNTP",123:"NTP",135:"MS-RPC",
+    137:"NetBIOS-NS",138:"NetBIOS-DGM",139:"NetBIOS-SSN",143:"IMAP",161:"SNMP",162:"SNMP-Trap",
+    179:"BGP",194:"IRC",389:"LDAP",443:"HTTPS",445:"SMB",464:"Kerberos-PW",465:"SMTPS",
+    500:"IKE/IPsec",514:"Syslog",515:"LPD",520:"RIP",546:"DHCPv6",547:"DHCPv6",548:"AFP",
+    554:"RTSP",587:"SMTP-Submission",593:"RPC-over-HTTP",623:"IPMI",636:"LDAPS",989:"FTPS-Data",
+    990:"FTPS",993:"IMAPS",995:"POP3S",
+    // --- Windows / AD ---
+    3268:"AD-GlobalCatalog",3269:"AD-GlobalCatalog-SSL",5985:"WinRM",5986:"WinRM-TLS",
+    9389:"AD-WebServices",47001:"WinRM-Listener",
+    // --- 遠端存取 / 檔案共享 ---
+    873:"rsync",1194:"OpenVPN",1701:"L2TP",1723:"PPTP",2049:"NFS",3389:"RDP",4500:"IPsec-NAT-T",
+    5800:"VNC-HTTP",5900:"VNC",5901:"VNC",5902:"VNC",5938:"TeamViewer",
+    // --- 資料庫 ---
+    1433:"MSSQL",1434:"MSSQL-Browser",1521:"Oracle",3050:"Firebird",3306:"MySQL",5432:"PostgreSQL",
+    5984:"CouchDB",6379:"Redis",7000:"Cassandra",9042:"Cassandra",9200:"Elasticsearch",
+    9300:"Elasticsearch",11211:"Memcached",27017:"MongoDB",50000:"DB2",
+    // --- Web / 應用 ---
+    3000:"HTTP-Alt",5000:"HTTP-Alt",8000:"HTTP-Alt",8008:"HTTP-Alt",8080:"HTTP-Proxy",
+    8081:"HTTP-Alt",8088:"HTTP-Alt",8443:"HTTPS-Alt",8888:"HTTP-Alt",9090:"HTTP-Admin",
+    // --- 郵件 / 目錄 / 語音 ---
+    1719:"H.323",1720:"H.323",3478:"STUN/TURN",5060:"SIP",5061:"SIP-TLS",
+    // --- 訊息佇列 / IoT ---
+    1883:"MQTT",5672:"AMQP",8883:"MQTT-TLS",9092:"Kafka",61616:"ActiveMQ",
+    // --- 醫療 ---
+    104:"DICOM",2575:"HL7",2761:"DICOM",2762:"DICOM-TLS",6661:"HL7",11112:"DICOM",
+    // --- OT / ICS ---
+    502:"Modbus",789:"RedLion",1911:"Niagara-Fox",2222:"EtherNet/IP-IO",2404:"IEC-104",
+    4911:"Niagara-Fox-TLS",9600:"Omron-FINS",20000:"DNP3",44818:"EtherNet/IP",47808:"BACnet",
+    // --- 資安產品 / 端點管理 ---
+    4343:"TrendMicro-OfficeScan",8014:"Symantec-SEPM",8082:"McAfee-ePO-Broadcast",
+    8190:"Sophos",8194:"Sophos",13000:"Kaspersky-KSC",13291:"Kaspersky-KSC",
+    14000:"Kaspersky-KSC",17472:"Tanium",
+    // --- 備份 / 虛擬化 / 管理 ---
+    902:"VMware-ESXi",903:"VMware-Console",1556:"NetBackup",5480:"VMware-VAMI",
+    8006:"Proxmox",9392:"Veeam",9393:"Veeam-Catalog",10000:"Webmin/NDMP",13720:"NetBackup",
+    13724:"NetBackup",
+    // --- 常見惡意/可疑用埠 ---
+    1337:"Suspicious-1337",4444:"Metasploit",5555:"ADB/Backdoor",6666:"IRC/Backdoor",
+    6667:"IRC",9001:"Tor",12345:"NetBus",31337:"BackOrifice",
+    // --- 其他 ---
+    6881:"BitTorrent",8291:"MikroTik-Winbox"
+  };
   // 醫療網路裡出現在不該出現的路徑上就值得看的服務
-  const RISKY=new Set([22,23,135,139,445,3389,5900]);
+  const RISKY=new Set([21,22,23,69,135,137,138,139,445,512,513,514,1337,3389,4444,5555,
+    5800,5900,5901,5902,5938,5985,5986,6666,6667,9001,12345,31337,47001]);
   // 標籤一律「埠號 服務名」;查不到就「埠號 unknown」,非標準 port 才不會消失
   const portLabel=p=>{p=+p; if(!p||p<0||p>65535) return ""; return PORTSVC[p]?(p+" "+PORTSVC[p]):(p+" unknown");};
   function serviceName(sp,dp){
