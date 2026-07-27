@@ -106,8 +106,19 @@
   .pt.risk{border-color:#5a2230;background:#2a1119;color:#ff8a94}
   .dmore{margin:6px 0 2px}
   .dmore button{padding:4px 9px;font-size:11px}
-  .dback{float:right;font-size:11px;color:var(--internal);cursor:pointer;user-select:none}
-  .dback:hover{text-decoration:underline}
+  /* 右側明細抽屜 */
+  #detail{position:absolute;top:0;right:0;bottom:0;width:340px;max-width:82vw;z-index:6;
+    background:var(--panel);border-left:1px solid var(--line);
+    display:flex;flex-direction:column;box-shadow:-10px 0 30px #0006}
+  #detail[hidden]{display:none}
+  #detail .dhead{padding:12px 16px 11px;border-bottom:1px solid var(--line);flex:0 0 auto;position:relative}
+  #detail #dclose{position:absolute;top:9px;right:10px;padding:2px 8px;font-size:15px;line-height:1.2;
+    background:transparent;border:1px solid var(--line);color:var(--muted)}
+  #detail #dclose:hover{border-color:var(--external);color:var(--external)}
+  #detail #dtitle{padding-right:30px;font-size:12px;line-height:1.6}
+  #detail #dtitle .t{font-size:14px;font-weight:650;color:var(--text)}
+  #detail #dbody{padding:0 16px 16px;overflow-y:auto;flex:1 1 auto;font-size:11.5px;color:var(--muted)}
+  @media (max-width:640px){#detail{width:100%;max-width:100%}}
   .stats .hoprow{color:var(--text)}
 
   #stage{flex:1 1 auto;position:relative;height:100%}
@@ -246,6 +257,13 @@
       </defs>
       <g id="viewport"></g>
     </svg>
+    <aside id="detail" hidden>
+      <div class="dhead">
+        <button id="dclose" title="關閉明細">×</button>
+        <div id="dtitle"></div>
+      </div>
+      <div id="dbody"></div>
+    </aside>
     <div id="empty">拖入 pcap 或 Zeek conn.log,<br>輸入聚焦 IP,拉動 hop 看關聯層次。<br><br>或展開「改用貼上資料」按「載入範例」。</div>
     <div id="tip"></div>
   </div>
@@ -320,11 +338,14 @@
     const DST=["destination.ip","dest_ip","dst_ip","id.resp_h","resp_h","server.ip","destination_ip","dstip"];
     const BY =["network.bytes","bytes","orig_ip_bytes","source.bytes","total.bytes","conn_bytes","doc_count","count"];
     const BY2=["resp_ip_bytes","destination.bytes"];
-    const LAB=["network.protocol","service","proto","id.resp_p","destination.port","dest_port","app"];
+    const LAB=["service","network.protocol","proto","app"];
+    const PRT=["id.resp_p","destination.port","dest_port","dstport","resp_p","server.port"];
     const header = zh ? zh : rows[0].map(s=>String(s).toLowerCase());
     const si=colIdx(header,SRC), di=colIdx(header,DST);
     let sI=0,dI=1,wI=2,wI2=-1,labI=3,start=0;
-    if(si>=0&&di>=0){ sI=si;dI=di;wI=colIdx(header,BY);wI2=colIdx(header,BY2);labI=colIdx(header,LAB); start=zh?0:1; }
+    let prtI=-1;
+    if(si>=0&&di>=0){ sI=si;dI=di;wI=colIdx(header,BY);wI2=colIdx(header,BY2);labI=colIdx(header,LAB);
+      prtI=colIdx(header,PRT); start=zh?0:1; }
     const edges=[];
     for(let r=start;r<rows.length;r++){
       const p=rows[r];
@@ -333,7 +354,9 @@
       let w=1;
       if(wI>=0&&p[wI]!=null&&p[wI]!==""){const n=parseFloat(String(p[wI]).replace(/[, ]/g,""));if(!isNaN(n))w=n;}
       if(wI2>=0&&p[wI2]!=null&&p[wI2]!==""){const n2=parseFloat(String(p[wI2]).replace(/[, ]/g,""));if(!isNaN(n2))w+=n2;}
-      const label=(labI>=0&&p[labI]!=null)?String(p[labI]).trim():"";
+      const svc=(labI>=0&&p[labI]!=null)?String(p[labI]).trim():"";
+      const prt=(prtI>=0&&p[prtI]!=null)?String(p[prtI]).trim():"";
+      const label=(svc||prt)?svcWithPort(svc,prt):"";
       edges.push({src,dst,w,label:(label==="-"?"":label)});
     }
     return edges;
@@ -408,7 +431,9 @@
       if(!w) w=num(o.orig_bytes)+num(o.resp_bytes);              // 退而求其次
       if(!w) w=num(o["network.bytes"])||num(o.bytes)||1;
       const pick=v=>(v==null||v===""||v==="-")?null:v;      // Zeek 用 "-" 表示空值
-      const label=pick(o.service)||pick(o.proto)||pick(o["network.protocol"])||"";
+      const svc=pick(o.service)||pick(o.proto)||pick(o["network.protocol"])||"";
+      const prt=pick(o["id.resp_p"])||pick(o["destination.port"])||pick(o.resp_p)||"";
+      const label=svcWithPort(svc,prt);
       edges.push({src,dst,w,label:String(label)});
     }
     return edges.length?edges:null;
@@ -447,6 +472,15 @@
   }
   // 純數字的標籤(Kibana 的 destination.port、Zeek 的 id.resp_p)也轉成同一格式
   const normLabel=s=>{const t=String(s).trim(); return /^\d{1,5}$/.test(t)?portLabel(t):t;};
+  // 服務名 + 埠號合併成一個標籤。內建認得的埠一律用內建名稱,來源不同才不會出現兩種寫法
+  function svcWithPort(name,port){
+    const p=+port, nm=(name==null?"":String(name).trim());
+    const valid=p>0&&p<=65535;
+    if(valid&&PORTSVC[p]) return portLabel(p);          // 104 DICOM
+    if(valid&&nm&&nm!=="-") return p+" "+nm;            // 8291 winbox
+    if(valid) return portLabel(p);                       // 8291 unknown
+    return (nm&&nm!=="-")?nm:"";                         // 只有服務名可用
+  }
   const ip4=(dv,o)=>dv.getUint8(o)+"."+dv.getUint8(o+1)+"."+dv.getUint8(o+2)+"."+dv.getUint8(o+3);
   function ip6(dv,o){
     const p=[]; for(let i=0;i<8;i++) p.push(dv.getUint16(o+i*2,false));
@@ -870,7 +904,7 @@
     }
 
     state.nodes=vnodes; state.edges=vedges; state.focus=focus; state.transform={k:1,x:0,y:0};
-    if(selNode && !vnodes.some(n=>n.ip===selNode)) selNode=null;
+    if(selNode && !vnodes.some(n=>n.ip===selNode)){ selNode=null; $("detail").hidden=true; }
     const W=stage.clientWidth,H=stage.clientHeight;
     stepFn=layout(vnodes,vedges,focus,W,H);
     // 節點過多時：斥力計算是 O(n²)，減少迭代避免瀏覽器卡死 (初始已依 hop 分層排好)
@@ -912,12 +946,13 @@
       h+=`<div class="dmore"><button data-more="${dir}">顯示全部 ${list.length} 個</button></div>`;
     return h;
   }
-  // 選中節點 -> 在左下角列出入站/出站對象與各自使用的 port
+  function closeDetail(){ selNode=null; $("detail").hidden=true; draw(); }
+  // 選中節點 -> 在右側抽屜列出入站/出站對象與各自使用的 port
   function showDetail(ip,keepMore){
     selNode=ip;
     if(!keepMore) selMore={in:false,out:false};
-    const el=$("stats"), n=state.nodes.find(x=>x.ip===ip);
-    if(!n){ selNode=null; updateStats(lastStats); return; }
+    const n=state.nodes.find(x=>x.ip===ip);
+    if(!n){ closeDetail(); return; }
     const inb=new Map(), outb=new Map();
     const put=(m,peer,e)=>{ let o=m.get(peer);
       if(!o){o={ip:peer,w:0,labels:new Set(),node:state.nodes.find(x=>x.ip===peer)||{}};m.set(peer,o);}
@@ -927,25 +962,27 @@
       if(e.src===ip) put(outb,e.dst,e);
     }
     const I=[...inb.values()].sort((a,b)=>b.w-a.w), O=[...outb.values()].sort((a,b)=>b.w-a.w);
-    let h=`<span class="dback" id="dback">← 返回總覽</span>`+
-      `<b>${esc(n.name||n.ip)}</b><br><span style="color:var(--muted)">${esc(n.ip)}`+
-      (n.role?" · "+esc(n.role):"")+`</span><br>總流量 ${fmt(n.total)} ・ 連線數 ${n.deg}`;
-    if(n.inInv===false) h+=`<br><span style="color:var(--rogue)">⚠ 不在資產表</span>`;
-    if(n.threat) h+=`<br><span style="color:var(--threat)">🛑 命中威脅情資</span>`;
-    h+=`<div class="dsec">入站 · 誰連進來<span class="c">${I.length} 個來源</span></div>`;
-    h+= I.length?peerRows(I,"in"):'<span style="color:var(--muted)">沒有入站連線。</span>';
+
+    let t=`<div class="t">${esc(n.name||n.ip)}</div>`+
+      `<span style="color:var(--muted);font-family:var(--mono)">${esc(n.ip)}`+
+      (n.role?" · "+esc(n.role):"")+`</span><br>`+
+      `<span style="color:var(--muted)">總流量 ${fmt(n.total)} ・ 連線數 ${n.deg}</span>`;
+    if(n.inInv===false) t+=`<br><span style="color:var(--rogue)">⚠ 不在資產表</span>`;
+    if(n.threat) t+=`<br><span style="color:var(--threat)">🛑 命中威脅情資</span>`;
+    $("dtitle").innerHTML=t;
+
+    let h=`<div class="dsec">入站 · 誰連進來<span class="c">${I.length} 個來源</span></div>`;
+    h+= I.length?peerRows(I,"in"):'沒有入站連線。';
     h+=`<div class="dsec">出站 · 這台連出去<span class="c">${O.length} 個目的</span></div>`;
-    h+= O.length?peerRows(O,"out"):'<span style="color:var(--muted)">沒有出站連線。</span>';
-    el.innerHTML=h;
-    const bk=$("dback");
-    if(bk) bk.addEventListener("click",()=>{ selNode=null; draw(); updateStats(lastStats); });
-    el.querySelectorAll("[data-more]").forEach(b=>
+    h+= O.length?peerRows(O,"out"):'沒有出站連線。';
+    const body=$("dbody");
+    body.innerHTML=h;
+    body.querySelectorAll("[data-more]").forEach(b=>
       b.addEventListener("click",()=>{ selMore[b.dataset.more]=true; showDetail(ip,true); }));
+    $("detail").hidden=false;
   }
 
-  let lastStats=null;
   function updateStats(o){
-    lastStats=o;
     if(!o||!o.nodes.length){
       $("stats").innerHTML = o&&o.focus&&!o.hasFocus
         ? `<b style="color:var(--external)">找不到 ${esc(o.focus)}</b><br>該 IP 不在這批資料中。`
@@ -1202,6 +1239,8 @@
   $("rings").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
   $("onlyRogue").addEventListener("change",()=>{ if(currentRaw.length) render(); });
   $("edgePort").addEventListener("change",()=>{ if(state.nodes.length) draw(); });
+  $("dclose").addEventListener("click",closeDetail);
+  window.addEventListener("keydown",ev=>{ if(ev.key==="Escape"&&selNode) closeDetail(); });
   $("renderPaste").addEventListener("click",()=>{ currentRaw=parseAny($("data").value)||[];
     status(`已解析：${currentRaw.length} 條連線`); render(); });
   $("sample").addEventListener("click",()=>{
@@ -1211,7 +1250,7 @@
   $("fit").addEventListener("click",fit);
   // 清空連線圖以便重新匯入;刻意保留資產表、威脅情資與各項設定,不必重新輸入
   $("clear").addEventListener("click",()=>{
-    currentRaw=[]; selNode=null;
+    currentRaw=[]; selNode=null; $("detail").hidden=true;
     if(rafId){cancelAnimationFrame(rafId);rafId=null;}
     stepFn=null; alpha=0;
     state.nodes=[]; state.edges=[]; state.transform={k:1,x:0,y:0};
