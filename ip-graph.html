@@ -161,6 +161,8 @@
       <label class="check"><input type="checkbox" id="onlyRogue"> 只顯示不在資產表的 IP</label>
       <label class="check"><input type="checkbox" id="diffOn" checked> 標記與基準相比的新增(綠色)</label>
       <label class="check"><input type="checkbox" id="onlyNew"> 只顯示新增的節點與流量</label>
+      <label class="check" style="margin-left:23px"><input type="checkbox" id="strictNew"> └ 嚴格:只留新節點本身(不含連到的舊主機)</label>
+      <input type="file" id="baseInput" accept=".json,.gz" style="display:none">
 
       <details style="margin-top:14px">
         <summary>資產盤點表 (選填)</summary>
@@ -209,6 +211,7 @@
       <button id="fit">重置視圖</button>
       <button id="clear" title="清除連線圖與基準線以便重新匯入(僅保留資產表與威脅情資)">清空重來</button>
       <button id="base" title="把目前這張圖記成基準。之後匯入新資料時,基準沒有的節點與連線會標成綠色">設為基準</button>
+      <button id="baseFile" title="拿之前「儲存工作階段」的 JSON 當基準,直接跟目前的圖比 diff">載入基準 JSON</button>
       <button id="save">儲存工作階段</button>
       <button id="dl">下載 SVG</button>
     </div>
@@ -786,11 +789,18 @@
     // 「只顯示新增的節點與流量」：保留新連線,以及新節點兩端相關的連線
     if($("onlyNew").checked){
       if(diffOn){
-        const keepE=vedges.filter(e=>e.isNew||
-          (vnodes.find(n=>n.ip===e.src)||{}).isNew||(vnodes.find(n=>n.ip===e.dst)||{}).isNew);
-        const keepIp=new Set(); keepE.forEach(e=>{keepIp.add(e.src);keepIp.add(e.dst);});
-        vnodes=vnodes.filter(n=>keepIp.has(n.ip)||n.isNew);
-        vedges=keepE;
+        if($("strictNew").checked){
+          // 嚴格:只留「新節點」本身,以及新節點彼此之間的連線。
+          // 新連線若另一端是舊主機,那台舊主機不留 (它本來就在基準裡)。
+          const newIp=new Set(vnodes.filter(n=>n.isNew).map(n=>n.ip));
+          vnodes=vnodes.filter(n=>newIp.has(n.ip));
+          vedges=vedges.filter(e=>newIp.has(e.src)&&newIp.has(e.dst));
+        }else{
+          const keepE=vedges.filter(e=>e.isNew);   // 新節點的邊必然也是新的,不需另外判斷
+          const keepIp=new Set(); keepE.forEach(e=>{keepIp.add(e.src);keepIp.add(e.dst);});
+          vnodes=vnodes.filter(n=>keepIp.has(n.ip)||n.isNew);
+          vedges=keepE;
+        }
       }else{
         status(baseline?"「只顯示新增」需同時勾選「標記與基準相比的新增」。":"請先按右上角「設為基準」記下基準圖,才能比較新增。",true);
       }
@@ -827,13 +837,21 @@
       });
     }
     if(o.baseInfo){
+      const bi=o.baseInfo;
       const nn=nodes.filter(n=>n.isNew), ne=edges.filter(e=>e.isNew);
-      html+=`<br><br><span style="color:var(--fresh)">與基準比較</span>（基準 ${o.baseInfo.n} 點 / ${o.baseInfo.e} 線）<br>`;
-      if(nn.length||ne.length){
-        html+=`&nbsp;新節點 <b style="color:var(--fresh)">${nn.length}</b> ・ 新流量 <b style="color:var(--fresh)">${ne.length}</b>`;
-        if(nn.length) html+=`<br>`+nn.slice(0,6).map(n=>`&nbsp;<span style="color:var(--fresh)">${esc(n.ip)}</span>`+(n.name?` (${esc(n.name)})`:"")).join("<br>")+
-          (nn.length>6?`<br>&nbsp;…另 ${nn.length-6} 個`:"");
-      }else html+=`&nbsp;沒有新增,與基準相同。`;
+      html+=`<br><br><span style="color:var(--fresh)">與基準 diff</span>（基準 ${bi.n} 點 / ${bi.e} 線`+
+        (bi.src?` · ${esc(bi.src)}`:"")+`）<br>`;
+      html+=`&nbsp;<span style="color:var(--fresh)">+ 新節點 <b>${nn.length}</b> ・ 新流量 <b>${ne.length}</b></span><br>`;
+      if(nn.length) html+=nn.slice(0,6).map(n=>`&nbsp;&nbsp;<span style="color:var(--fresh)">+ ${esc(n.ip)}</span>`+(n.name?` (${esc(n.name)})`:"")).join("<br>")+
+        (nn.length>6?`<br>&nbsp;&nbsp;…另 ${nn.length-6} 個`:"")+`<br>`;
+      // 反向 diff:基準有、現在沒有的(消失的主機/連線)
+      const curIp=new Set(nodes.map(n=>n.ip)), curPair=new Set(edges.map(e=>e.src+"\u0000"+e.dst));
+      const goneIp=[...bi.ips].filter(ip=>!curIp.has(ip));
+      const gonePair=[...bi.pairs].filter(p=>!curPair.has(p));
+      html+=`&nbsp;<span style="color:var(--muted)">− 消失節點 <b>${goneIp.length}</b> ・ 消失流量 <b>${gonePair.length}</b></span>`;
+      if(goneIp.length) html+=`<br>`+goneIp.slice(0,6).map(ip=>`&nbsp;&nbsp;<span style="color:var(--muted)">− ${esc(ip)}</span>`).join("<br>")+
+        (goneIp.length>6?`<br>&nbsp;&nbsp;…另 ${goneIp.length-6} 個`:"");
+      if(!nn.length&&!ne.length&&!goneIp.length&&!gonePair.length) html+=`<br>&nbsp;與基準完全相同。`;
     }
     const rogue=nodes.filter(n=>n.inInv===false).length;
     if(amap&&amap.size>0&&rogue) html+=`<br><b style="color:var(--rogue)">${rogue}</b> 個不在資產表`;
@@ -1085,8 +1103,30 @@
     status(`已設為基準:${fmt(ips.size)} 個 IP、${fmt(pairs.size)} 條連線。再匯入新資料即可看出新增(綠色)。`);
     if(state.nodes.length) render();
   });
+  // 直接拿之前「儲存工作階段」的 JSON 當基準,不必先把舊資料畫出來
+  $("baseFile").addEventListener("click",()=>$("baseInput").click());
+  $("baseInput").addEventListener("change",async ev=>{
+    const f=ev.target.files&&ev.target.files[0]; if(!f) return;
+    ev.target.value="";                       // 允許重複選同一個檔
+    try{
+      let buf=await f.arrayBuffer();
+      if(isGzip(buf)) buf=await gunzip(buf);
+      const text=new TextDecoder("utf-8",{fatal:false}).decode(buf);
+      const sess=parseSession(text);
+      const raw = sess ? sess.edges.map(e=>({src:e.s,dst:e.d,w:e.w})) : parseAny(text);
+      if(!raw||!raw.length){ status("這個檔案讀不出連線資料,無法當基準。",true); return; }
+      const all=buildGraph(raw);
+      const ips=new Set(), pairs=new Set();
+      for(const e of all){ ips.add(e.src); ips.add(e.dst); pairs.add(e.src+"\u0000"+e.dst); }
+      baseline={ips,pairs,at:new Date(),n:ips.size,e:pairs.size,src:f.name};
+      $("diffOn").checked=true;
+      status(`已載入基準:${esc(f.name)} — ${fmt(ips.size)} 個 IP、${fmt(pairs.size)} 條連線。`);
+      if(currentRaw.length) render(); else updateStats(null);
+    }catch(err){ status("載入基準失敗:"+err.message,true); }
+  });
   $("diffOn").addEventListener("change",()=>{ if(currentRaw.length) render(); });
   $("onlyNew").addEventListener("change",()=>{ if(currentRaw.length) render(); });
+  $("strictNew").addEventListener("change",()=>{ if(currentRaw.length) render(); });
   $("save").addEventListener("click",saveSession);
   $("dl").addEventListener("click",downloadSVG);
   window.addEventListener("resize",()=>{ if(state.nodes.length) draw(); });
