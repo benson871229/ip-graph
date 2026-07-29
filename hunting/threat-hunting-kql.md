@@ -188,7 +188,7 @@ event.dataset:alert and event.severity:1
 ```
 
 **用途**:Suricata 嚴重度 1 = 最嚴重。**這條應該是你每天上班第一個跑的**。
-**接下來**:用 `get-so-alerts.ps1` 抓出來疊到 ip-graph 上看關聯。
+**接下來**:把命中的來源 IP 記下來,在 ip-graph 的「威脅情資」欄位貼上,關聯圖上會直接標紅。
 
 ### D3. 長連線(Beacon / 隧道)
 
@@ -381,49 +381,25 @@ event.dataset:http and http.virtual_host:(0* or 1* or 2* or 3* or 4* or 5* or 6*
 | 方式 | 可行性 | 說明 |
 |---|---|---|
 | Kibana Alerting | ❌ | Basic 授權沒有 |
-| **SO 內建 Detections** | ✅ | SO 2.4 可管理 Suricata / Sigma 規則,適合「持續偵測」 |
-| **PowerShell + 工作排程器** | ✅ **推薦** | 你已有 `get-so-graph.ps1` 的基礎,零安裝 |
+| **SO 內建 Detections** | ✅ **推薦** | SO 2.4 可管理 Suricata / Sigma 規則,適合「持續偵測」 |
+| 自寫腳本打 ES `_search` | ✅ | 需要 9200 存取權;本 repo 不附腳本,見下方注意事項 |
 | ElastAlert2 | ⚠️ | 要另外部署服務,你的環境不一定允許 |
 
-### H3. 推薦做法:PowerShell 排程獵捕
+### H3. 推薦做法:把穩定的獵捕變成 Sigma 規則
 
-本 repo 附 **`Invoke-Hunt.ps1`**:把本手冊的查詢寫成清單,一次跑完並輸出報表。
+本手冊裡**誤報低、可用筆數門檻判斷**的那幾條(見 H4),最適合的歸宿不是排程腳本,
+而是寫成 **Sigma 規則**交給 SO 的 Detections 管理 —— 它本來就會持續比對,
+命中就進 Alerts,不必另外維護排程與報表。
 
-```powershell
-# 跑全部獵捕,輸出 CSV 摘要
-.\Invoke-Hunt.ps1 -Server https://10.x.x.x/kibana -Mode kibana -Username analyst `
-    -Since now-24h -OutFile hunt-report.csv -SkipCertCheck
+若你要自己寫腳本排程(PowerShell 或其他),有兩個前置條件:
 
-# 只跑某一類(例如橫向移動)
-.\Invoke-Hunt.ps1 -Server https://10.x.x.x:9200 -Username analyst -Category 橫向移動 -SkipCertCheck
-```
-
-先看它內建哪些獵捕(不需連線):
-
-```powershell
-.\Invoke-Hunt.ps1 -ListOnly
-```
-
-每條會輸出 **命中筆數 / 涉及來源 IP 數 / 前 5 大來源**,超過門檻標成 `ALERT`。
-排程後你只要看「有沒有 ALERT」即可。
-
-再用 Windows **工作排程器**每天早上 7:00 跑一次,你上班就有報表:
-
-```powershell
-# 建立排程(用 API key 才不用把密碼放進排程)
-$act = New-ScheduledTaskAction -Execute "powershell.exe" `
-  -Argument '-NoProfile -File C:\tools\Invoke-Hunt.ps1 -Server https://10.x.x.x:9200 -ApiKey "AbCd==" -Index "logs-*" -Since now-24h -OutFile C:\tools\hunt.csv -SkipCertCheck'
-$trg = New-ScheduledTaskTrigger -Daily -At 7:00am
-Register-ScheduledTask -TaskName "SO-DailyHunt" -Action $act -Trigger $trg
-```
-
-> **門檻要自己調**。內建門檻是保守的起始值,請先跑一週看你的正常基線,
-> 再把 `$Hunts` 裡的 `Threshold` 調成「平常不會超過、異常才會超過」的數字。
-> **門檻沒調好 = 每天都 ALERT = 你會開始忽略它**,那比沒有告警更糟。
-
-> **注意**:與 `get-so-graph.ps1` 相同的存取限制適用 —— SO 2.4 的 SSO 會擋掉 443 上的
-> Basic auth,需要開放 9200 直連:
-> `sudo so-firewall includehost elasticsearch_rest <你的分析機IP>`
+1. **存取權**:SO 2.4 的 SSO 會擋掉 443 上的 Basic auth,腳本打不進 Kibana。
+   需要開放 Elasticsearch 9200 給你的分析機:
+   ```bash
+   sudo so-firewall includehost elasticsearch_rest <你的分析機IP>
+   ```
+2. **查詢改寫**:本手冊是 KQL(Kibana 用)。打 ES `_search` 要放進
+   `query_string` 並開 `analyze_wildcard`,或改寫成 DSL。
 
 ### H4. 哪些適合自動化、哪些不適合
 
@@ -446,7 +422,7 @@ Register-ScheduledTask -TaskName "SO-DailyHunt" -Action $act -Trigger $trg
 ```
 Kibana 跑 KQL 找到可疑主機
     ↓
-get-so-graph.ps1 抓那台主機的關聯       (或直接把 Discover 結果匯出)
+在 Discover 匯出結果,或用 Kibana 的表格複製成 CSV
     ↓
 拖進 ip-graph.html,設聚焦 IP、看 2 hop
     ↓

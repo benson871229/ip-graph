@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 .SYNOPSIS
     從 FortiGate 設定檔擷取 IP 與對應名稱，輸出成資產清單 (ip,名稱,角色)。
