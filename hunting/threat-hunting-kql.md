@@ -69,6 +69,73 @@ event.dataset:conn and source.ip:10.0.0.0/8 and not destination.ip:10.0.0.0/8
 **用途**:醫療設備原則上不該直接對外。這條會直接列出所有違反的。
 **誤報**:更新伺服器、NTP、DNS forwarder 是正常的,先建立白名單。
 
+### A4. 找出存活主機
+
+```
+event.dataset:conn and destination.ip:10.20.0.0/24
+    and connection.state:(SF or S1 or S2 or S3 or REJ or RSTO or RSTR or SHR)
+```
+
+**⚠ 最大的陷阱**:直接對 `destination.ip` 做 terms 聚合,會把**掃描器碰過的整個網段**
+都算成存活。掃描器打一輪 `/24`,254 個 IP 全部出現在 top values 裡,
+實際可能只有 12 台真的存在。**「被連過」不等於「活著」,只有「有回應」才算。**
+
+`conn_state` 才是判準,而且有個常見誤解:
+
+| state | 意義 | 算不算活 |
+|---|---|---|
+| `S0` | 送了 SYN,**完全沒回應** | **不算**(目標不存在,或被防火牆 drop) |
+| `REJ` | 對方回了 RST 拒絕 | **算活的** — 有回 RST 就代表主機在,只是那個 port 關著 |
+| `SF` / `S1` / `S2` / `S3` | 連線已建立 | 算 |
+| `RSTO` / `RSTR` | 建立後被中斷 | 算 |
+| `SH` / `RSTOS0` | 只有單向 SYN,沒看到回應 | **不算** |
+
+很多人把 `REJ` 當成「不活」,其實剛好相反。
+**欄位注意**:依版本可能是 `connection.state` / `zeek.conn.state` / `conn_state`,先用第 0 節確認。
+
+**雙向都要看**:conn.log 一筆只有 orig / resp 兩端,**只當 server 的設備永遠不會出現在
+`source.ip`**。完整的存活清單 = `source.ip` 的相異值 ∪ 有回應的 `destination.ip` 相異值。
+出現在 `source.ip` 就一定活著(它主動送過東西),這半邊不需要看 state:
+
+```
+event.dataset:conn and source.ip:10.20.0.0/24
+```
+
+**Basic 授權的取清單限制**:Discover 左側欄位面板的 top values **只採樣部分文件**,
+不是完整清單,而且沒有 CSV 匯出。要完整清單得用 Visualize → Data Table
+把 terms 的 size 調大,或直接在 SO 主機上算。
+
+#### 更直接的答案:`known_hosts.log` / `known_services.log`
+
+Zeek 本來就在記這個 —— `known_hosts.log` 就是「觀察到有活動的本地主機」清單,
+`known_services.log` 更是 `主機 + 埠 + 服務` 的去重清單,**幾乎就是現成的資產盤點**。
+
+```
+event.dataset:known_services
+```
+
+**但不要假設一定拿得到**,有四個不確定性:
+
+1. **SO 不一定把這兩個 dataset 送進 Elasticsearch**。查到 0 筆不代表沒有檔案,
+   只代表沒進 ES。
+2. 依賴 `Site::local_nets`(HOME_NET)設定正確,設錯會是空的或整個反過來。
+3. **有到期機制**(預設約一天),Zeek 重啟或 log 輪替後主機會重新被記一次 ——
+   拿它當「新主機」訊號會有重啟造成的假新增。
+4. 偏向 TCP 且需要連線成立,只回 ICMP 或只跑 UDP 的設備可能不在裡面。
+
+Kibana 查不到時,直接在 SO 主機上讀檔:
+
+```bash
+ls -l /nsm/zeek/logs/current/known_*.log
+cat /nsm/zeek/logs/current/known_services.log | zeek-cut host port_num port_proto service | sort -u
+```
+
+**結論**:拿得到 `known_services.log` 就用它當起點,最省力;
+拿不到就退回上面的 conn.log + `conn_state` 自己算。兩條路都可行。
+
+> 要把存活主機進一步整理成**流量基準**,見 `baseline/README.md` ——
+> 那邊是依服務彙總,不必逐 IP 看 port。
+
 ---
 
 ## B. 掃描與偵察
