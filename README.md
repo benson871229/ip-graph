@@ -10,7 +10,6 @@ PowerShell 腳本用 Windows 內建的就能跑。適合受管制或 air-gapped 
 | **`graph/`** | `ip-graph.html` — 網路流量關聯圖工具(主要產出) |
 | **`assets/`** | 資產盤點:從防火牆設定擷取 IP↔設備名稱,並合併進既有 Excel 資產表 |
 | **`hunting/`** | `threat-hunting-kql.md` — Security Onion / Kibana 的威脅獵捕 KQL 手冊 |
-| **`baseline/`** | 流量基準:依服務彙總,產出可在 Excel 審核的 CSV |
 | **`intel/`** | `malicious-ip.txt` — 高信度惡意 IP 清單,供關聯圖標記威脅 |
 
 ---
