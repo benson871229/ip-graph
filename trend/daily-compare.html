@@ -143,28 +143,30 @@
     out.push(cur);return out.map(s=>s.trim());}
 
   // ===================== 輸入解析 =====================
-  const colIdx=(header,names)=>{for(const n of names){const i=header.indexOf(n);if(i>=0)return i;}return -1;};  function parseCSV(text){
-    const all=text.split(/\r?\n/);
-    let zh=null;
-    for(const l of all){ if(l.indexOf("#fields")===0){ zh=l.replace(/^#fields\s*/,"").split("\t").map(s=>s.trim().toLowerCase()); break; } }
-    const rows=[];
-    for(const raw of all){ const l=raw.trim(); if(!l||l[0]==="#") continue; rows.push(splitLine(l)); }
-    if(!rows.length) return [];
-    const SRC=["source.ip","src_ip","id.orig_h","orig_h","client.ip","source_ip","srcip"];
-    const DST=["destination.ip","dest_ip","dst_ip","id.resp_h","resp_h","server.ip","destination_ip","dstip"];
-    const BY =["network.bytes","bytes","orig_ip_bytes","source.bytes","total.bytes","conn_bytes","doc_count","count"];
-    const BY2=["resp_ip_bytes","destination.bytes"];
-    const LAB=["service","network.protocol","proto","app"];
-    const PRT=["id.resp_p","destination.port","dest_port","dstport","resp_p","server.port"];
-    const PRO=["proto","network.transport","ip_proto","protocol"];
-    const OPR=["id.orig_p","source.port","src_port","sport","orig_p"];
+  const colIdx=(header,names)=>{for(const n of names){const i=header.indexOf(n);if(i>=0)return i;}return -1;};
+
+  // 欄名對照。抽成常數讓 parseCSV 與串流解析共用同一份定義。
+  const SRC=["source.ip","src_ip","id.orig_h","orig_h","client.ip","source_ip","srcip"];
+  const DST=["destination.ip","dest_ip","dst_ip","id.resp_h","resp_h","server.ip","destination_ip","dstip"];
+  const BY =["network.bytes","bytes","orig_ip_bytes","source.bytes","total.bytes","conn_bytes","doc_count","count"];
+  const BY2=["resp_ip_bytes","destination.bytes"];
+  const LAB=["service","network.protocol","proto","app"];
+  const PRT=["id.resp_p","destination.port","dest_port","dstport","resp_p","server.port"];
+  const PRO=["proto","network.transport","ip_proto","protocol"];
+  const OPR=["id.orig_p","source.port","src_port","sport","orig_p"];
+
+  // 依 #fields 表頭(zh)或取樣的資料列決定各欄位置。回傳的 start 表示樣本要從第幾列開始當資料。
+  function detectCfg(zh,sample){
+    const rows=sample.filter(r=>r&&r.length);
+    if(!rows.length) return null;
     const header = zh ? zh : rows[0].map(s=>String(s).toLowerCase());
     const si=colIdx(header,SRC), di=colIdx(header,DST);
-    let sI=0,dI=1,wI=2,wI2=-1,labI=3,start=0;
-    let prtI=-1,proI=-1,oprI=-1;
-    if(si>=0&&di>=0){ sI=si;dI=di;wI=colIdx(header,BY);wI2=colIdx(header,BY2);labI=colIdx(header,LAB);
-      prtI=colIdx(header,PRT); proI=colIdx(header,PRO); oprI=colIdx(header,OPR); start=zh?0:1; }
-    else{
+    let sI=0,dI=1,wI=2,wI2=-1,labI=3,start=0,prtI=-1,proI=-1,oprI=-1;
+    if(si>=0&&di>=0){
+      sI=si;dI=di;wI=colIdx(header,BY);wI2=colIdx(header,BY2);labI=colIdx(header,LAB);
+      prtI=colIdx(header,PRT); proI=colIdx(header,PRO); oprI=colIdx(header,OPR);
+      start = zh?0:1;                      // 沒有 #fields 時,樣本第一列是表頭要跳過
+    }else{
       // 沒有標題列 (zeek-cut 輸出、awk 產的 CSV):靠內容猜哪一欄是流量、port、服務名
       const samp=rows.slice(0,50).filter(r=>r.length>2);
       const ncol=Math.max(...samp.map(r=>r.length),0);
@@ -183,23 +185,64 @@
       if(bytesC<0) bytesC=(portC===2?-1:2);
       wI=bytesC; prtI=portC; labI=textC;
     }
-    const edges=[];
-    for(let r=start;r<rows.length;r++){
-      const p=rows[r];
-      const src=(p[sI]||"").trim(), dst=(p[dI]||"").trim();
-      if(!src||!dst||!/[.:]/.test(src)||!/[.:]/.test(dst)) continue;
-      let w=1;
-      if(wI>=0&&p[wI]!=null&&p[wI]!==""){const n=parseFloat(String(p[wI]).replace(/[, ]/g,""));if(!isNaN(n))w=n;}
-      if(wI2>=0&&p[wI2]!=null&&p[wI2]!==""){const n2=parseFloat(String(p[wI2]).replace(/[, ]/g,""));if(!isNaN(n2))w+=n2;}
-      const svc=(labI>=0&&p[labI]!=null)?String(p[labI]).trim():"";
-      const prt=(prtI>=0&&p[prtI]!=null)?String(p[prtI]).trim():"";
-      const pro=(proI>=0&&p[proI]!=null)?String(p[proI]).trim():"";
-      const opr=(oprI>=0&&p[oprI]!=null)?String(p[oprI]).trim():"";
-      const label=(svc||prt||pro)?svcWithPort(svc,prt,pro,opr):"";
-      edges.push({src,dst,w,label:(label==="-"?"":label)});
+    return {sI,dI,wI,wI2,labI,prtI,proI,oprI,start};
+  }
+
+  // 單列 -> edge。回傳 null 表示這列不是有效連線。
+  function rowToEdge(c,p){
+    const src=(p[c.sI]||"").trim(), dst=(p[c.dI]||"").trim();
+    if(!src||!dst||!/[.:]/.test(src)||!/[.:]/.test(dst)) return null;
+    let w=1;
+    if(c.wI>=0&&p[c.wI]!=null&&p[c.wI]!==""){const n=parseFloat(String(p[c.wI]).replace(/[, ]/g,""));if(!isNaN(n))w=n;}
+    if(c.wI2>=0&&p[c.wI2]!=null&&p[c.wI2]!==""){const n2=parseFloat(String(p[c.wI2]).replace(/[, ]/g,""));if(!isNaN(n2))w+=n2;}
+    const svc=(c.labI>=0&&p[c.labI]!=null)?String(p[c.labI]).trim():"";
+    const prt=(c.prtI>=0&&p[c.prtI]!=null)?String(p[c.prtI]).trim():"";
+    const pro=(c.proI>=0&&p[c.proI]!=null)?String(p[c.proI]).trim():"";
+    const opr=(c.oprI>=0&&p[c.oprI]!=null)?String(p[c.oprI]).trim():"";
+    const label=(svc||prt||pro)?svcWithPort(svc,prt,pro,opr):"";
+    return {src,dst,w,label:(label==="-"?"":label)};
+  }
+
+  // 逐行送入的解析器。前 50 列先取樣以決定欄位,之後每來一行就直接吐出 edge,
+  // 全程不保留整份文字或整份列陣列 —— 這是串流版能省記憶體的關鍵。
+  function makeLineParser(){
+    let zh=null, sample=[], cfg=null;
+    function flush(emit){
+      if(!cfg){
+        if(!sample.length) return;
+        cfg=detectCfg(zh,sample);
+        if(!cfg){ sample=[]; return; }
+        for(let i=cfg.start;i<sample.length;i++){ const e=rowToEdge(cfg,sample[i]); if(e) emit(e); }
+      }else{
+        for(const p of sample){ const e=rowToEdge(cfg,p); if(e) emit(e); }
+      }
+      sample=[];
     }
+    return {
+      line(raw,emit){
+        const l=raw.trim();
+        if(!l) return;
+        if(l.indexOf("#fields")===0){ zh=l.replace(/^#fields\s*/,"").split("\t").map(x=>x.trim().toLowerCase()); return; }
+        if(l[0]==="#") return;
+        const p=splitLine(l);
+        if(cfg){ const e=rowToEdge(cfg,p); if(e) emit(e); return; }
+        sample.push(p);
+        if(zh||sample.length>=50) flush(emit);       // 有 #fields 就不必等取樣
+      },
+      flush
+    };
+  }
+
+  // 整份文字一次解析。保留給小檔與測試用;大檔請走 streamParse。
+  function parseCSV(text){
+    const P=makeLineParser(), edges=[];
+    const emit=e=>edges.push(e);
+    for(const line of text.split(/\r?\n/)) P.line(line,emit);
+    P.flush(emit);
     return edges;
-  }  const PORTSVC={
+  }
+
+  const PORTSVC={
     // --- 基本網路 / 網際網路 ---
     20:"FTP-Data",21:"FTP",22:"SSH",23:"Telnet",25:"SMTP",37:"Time",42:"WINS",43:"WHOIS",
     49:"TACACS+",53:"DNS",67:"DHCP",68:"DHCP",69:"TFTP",79:"Finger",80:"HTTP",88:"Kerberos",
@@ -321,7 +364,7 @@
   let allDays=[];
   let sortKey="auto", sortDir=1;
 
-  const SEP=" ";
+  const SEP="\u0000";
   const fmtSize=n=>n>=1073741824?(n/1073741824).toFixed(1)+" GB"
                   :(n>=1048576?(n/1048576).toFixed(1)+" MB"
                   :(n>=1024?(n/1024).toFixed(1)+" KB":Math.round(n)+" B"));
@@ -334,44 +377,86 @@
   }
   const isGzip=b=>{ if(b.byteLength<2) return false; const u=new Uint8Array(b,0,2); return u[0]===0x1f&&u[1]===0x8b; };
 
+  // 串流讀檔:逐行處理、邊讀邊彙總,不保留整份文字與中間陣列。
+  // 一次載入整份再 split 的做法,實測記憶體是檔案的 8 倍以上(300MB 的 log 就會讓分頁 OOM)。
+  async function streamParse(file,emit){
+    let stream=file.stream();
+    // 串流無法先窺探位元組再回頭,所以 gzip 用副檔名判斷
+    if(/\.gz$/i.test(file.name)){
+      if(typeof DecompressionStream==="undefined") throw new Error("此瀏覽器不支援 gzip,請先解開 .gz");
+      stream=stream.pipeThrough(new DecompressionStream("gzip"));
+    }
+    const reader=stream.pipeThrough(new TextDecoderStream("utf-8")).getReader();
+    const P=makeLineParser();
+    let buf="";
+    for(;;){
+      const {done,value}=await reader.read();
+      if(value){
+        buf+=value;
+        let st=0,i;
+        while((i=buf.indexOf("\n",st))>=0){ P.line(buf.slice(st,i),emit); st=i+1; }
+        buf=buf.slice(st);                       // 每個 chunk 只 slice 一次,避免 O(n²)
+      }
+      if(done) break;
+    }
+    if(buf) P.line(buf,emit);
+    P.flush(emit);                               // 小檔沒滿 50 行時要補
+  }
+
+  // 舊瀏覽器沒有 File.stream() 時的退路
+  async function wholeParse(file,emit){
+    let buf=await file.arrayBuffer();
+    if(isGzip(buf)) buf=await gunzip(buf);
+    const text=new TextDecoder("utf-8",{fatal:false}).decode(buf);
+    for(const e of parseCSV(text)) emit(e);
+  }
+
+  const CAP=300000;      // 唯一連線數上限,超過就停止收新的,避免瀏覽器被拖垮
+  let capped=false;
+
   async function loadFiles(list){
     const files=[...list].filter(f=>f&&f.size>0);
     if(!files.length) return;
-    const days=new Set(); let ok=0,fail=0,rows=0;
+    const streamable = typeof ReadableStream!=="undefined" && typeof TextDecoderStream!=="undefined"
+                       && files[0] && typeof files[0].stream==="function";
+    const days=new Set(); let ok=0,fail=0,rows=0,bytes=0;
     const t0=performance.now();
     for(let i=0;i<files.length;i++){
       const f=files[i];
-      status(`解析中… (${i+1}/${files.length}) ${esc(f.name)}`);
+      const path=f.webkitRelativePath||f.name;
+      const day=dateFrom(path,f.lastModified)||("檔案"+(i+1));
+      status(`解析中… (${i+1}/${files.length}) ${esc(f.name)} · ${fmtSize(f.size)}`);
       await new Promise(r=>setTimeout(r,0));
-      try{
-        let buf=await f.arrayBuffer();
-        if(isGzip(buf)) buf=await gunzip(buf);
-        const text=new TextDecoder("utf-8",{fatal:false}).decode(buf);
-        const edges=parseCSV(text);
-        if(!edges||!edges.length){ fail++; continue; }
-        const path=f.webkitRelativePath||f.name;
-        const day=dateFrom(path,f.lastModified)||("檔案"+(i+1));
-        days.add(day);
-        for(const e of edges){
-          rows++;
-          const svc=normLabel(e.label||"")||"(無服務資訊)";
-          const k=e.src+SEP+e.dst+SEP+svc;
-          let o=byKey.get(k);
-          if(!o){
-            const pm=/^(\d{1,5})\s/.exec(svc);
-            o={src:e.src,dst:e.dst,svc,port:pm?pm[1]:"",byDay:new Map()};
-            byKey.set(k,o);
-          }
-          o.byDay.set(day,(o.byDay.get(day)||0)+e.w);
+      let got=0;
+      const emit=e=>{
+        rows++;
+        if(capped) return;
+        const svc=normLabel(e.label||"")||"(無服務資訊)";
+        const k=e.src+SEP+e.dst+SEP+svc;
+        let o=byKey.get(k);
+        if(!o){
+          if(byKey.size>=CAP){ capped=true; return; }
+          const pm=/^(\d{1,5})\s/.exec(svc);
+          o={src:e.src,dst:e.dst,svc,port:pm?pm[1]:"",byDay:new Map()};
+          byKey.set(k,o);
         }
-        ok++;
+        o.byDay.set(day,(o.byDay.get(day)||0)+e.w);
+        got++;
+      };
+      try{
+        if(streamable) await streamParse(f,emit); else await wholeParse(f,emit);
+        if(!got){ fail++; continue; }
+        days.add(day); bytes+=f.size; ok++;
       }catch(err){ fail++; }
     }
     if(!byKey.size){ status("沒有解析到任何連線資料(檔案格式不符?)",true); return; }
     allDays=[...new Set(allDays.concat([...days]))].sort();
     const ms=Math.round(performance.now()-t0);
-    status(`${ok} 個檔案 · ${allDays.length} 天 · ${fmt(rows)} 筆 → ${fmt(byKey.size)} 條連線 (${ms}ms)`+
-           (fail?` · ${fail} 個略過`:""));
+    let msg=`${ok} 個檔案 · ${fmtSize(bytes)} · ${allDays.length} 天 · ${fmt(rows)} 筆 → ${fmt(byKey.size)} 條連線 (${ms}ms)`;
+    if(fail) msg+=` · ${fail} 個略過`;
+    if(!streamable) msg+=" · 此瀏覽器不支援串流,已整檔載入(大檔可能失敗)";
+    status(msg, capped);
+    if(capped) status(`已達上限 ${fmt(CAP)} 條唯一連線,後續資料未收。請先在 SO 主機上彙總再匯入(見 baseline/make-baseline.sh)。`,true);
     buildBaseOptions();
     $("ctl").classList.add("on");
     render();
@@ -524,7 +609,7 @@
         .concat(r.by.map(v=>Math.round(v))).map(q).join(","));
     }
     // UTF-8 BOM + CRLF,Excel 開中文才正常
-    const blob=new Blob(["﻿"+lines.join("\r\n")+"\r\n"],{type:"text/csv;charset=utf-8"});
+    const blob=new Blob(["\ufeff"+lines.join("\r\n")+"\r\n"],{type:"text/csv;charset=utf-8"});
     const a=document.createElement("a");
     a.href=URL.createObjectURL(blob);
     a.download="daily-compare-"+(allDays[0]||"").replace(/-/g,"")+"-"+(allDays[allDays.length-1]||"").replace(/-/g,"")+".csv";
@@ -559,7 +644,7 @@
   });
 
   if(typeof module!=="undefined"&&module.exports){
-    module.exports={dateFrom,parseCSV,normLabel,portLabel,svcWithPort,ipClass,splitLine,PORTSVC,RISKY};
+    module.exports={dateFrom,parseCSV,makeLineParser,detectCfg,rowToEdge,normLabel,portLabel,svcWithPort,ipClass,splitLine,PORTSVC,RISKY};
   }
 })();
 </script>
