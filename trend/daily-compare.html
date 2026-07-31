@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>多天流量比較 — 累積基準 · 首見 · 趨勢</title>
+<style>
+  :root{
+    --bg:#0d1522; --panel:#131d2e; --panel2:#1a2740; --line:#2a3a56;
+    --text:#cdd8e8; --muted:#7f8fa6;
+    --focus:#f0b24a; --internal:#46b7c9; --external:#e46f56; --other:#8a93a6;
+    --rogue:#d76ad7; --threat:#ff4d4d; --edge:#38486a; --edgehi:#86b4e6;
+    --fresh:#3fd68a;
+    --mono:ui-monospace,"Cascadia Code","Consolas","SF Mono",Menlo,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans TC",sans-serif;
+  }    --fresh:#3fd68a; --warn:#ff9d3d; --grow:#5ea8ff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--sans)}
+  .wrap{padding:18px clamp(10px,3vw,30px) 34px;line-height:1.5}
+  .card{max-width:1240px;margin:0 auto;background:linear-gradient(180deg,#101a2c,#0d1524);
+    border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:0 24px 60px #0007}
+  header{padding:15px 20px 13px;border-bottom:1px solid var(--line)}
+  header h1{margin:0;font-size:clamp(15px,2.3vw,19px);font-weight:650}
+  header .sub{margin-top:4px;font-size:11.5px;color:var(--muted);font-family:var(--mono)}
+
+  #drop{margin:14px 20px;border:1.5px dashed var(--line);border-radius:9px;padding:18px 14px;
+    text-align:center;cursor:pointer;color:var(--muted);font-size:12.5px;line-height:1.7;
+    transition:border-color .15s,background .15s}
+  #drop:hover,#drop.over{border-color:var(--internal);background:#0f1a2b;color:var(--text)}
+  #drop b{color:var(--internal)} #drop .big{font-size:13.5px;color:var(--text);margin-bottom:3px}
+  #drop .fmt{font-size:10.5px;font-family:var(--mono);margin-top:5px;opacity:.75}
+
+  .ctl{display:none;flex-wrap:wrap;gap:11px 17px;align-items:center;
+    padding:12px 20px;background:#0e1626;border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line);font-size:12.5px}
+  .ctl.on{display:flex}
+  .ctl label{display:flex;align-items:center;gap:6px;color:var(--muted);cursor:pointer;user-select:none}
+  .ctl input[type=checkbox]{accent-color:var(--fresh);width:15px;height:15px}
+  .ctl select,.ctl input[type=text]{background:var(--bg);color:var(--text);border:1px solid var(--line);
+    border-radius:6px;padding:5px 8px;font-size:12px;font-family:var(--sans)}
+  .ctl input[type=text]{font-family:var(--mono)}
+  .ctl .sep{width:1px;height:20px;background:var(--line)}
+  button{cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--text);
+    border-radius:6px;padding:6px 11px;font-size:12px;font-family:var(--sans)}
+  button:hover{border-color:var(--internal)}
+
+  #status{padding:10px 20px;font-family:var(--mono);font-size:12px;color:var(--muted);
+    border-bottom:1px solid var(--line);background:#0c1422;min-height:38px;display:flex;align-items:center}
+  #status.err{color:var(--external)}
+  #status b{color:var(--fresh)} #status .w{color:var(--warn)} #status .g{color:var(--grow)}
+
+  .tw{overflow:auto;max-height:60vh}
+  table{width:100%;border-collapse:collapse;font-size:12px;min-width:980px}
+  thead th{position:sticky;top:0;background:#16223a;z-index:2;text-align:left;padding:9px 12px;
+    font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);
+    border-bottom:1px solid var(--line);cursor:pointer;white-space:nowrap;user-select:none}
+  thead th:hover{color:var(--text)} thead th .ar{opacity:.5;font-size:9px}
+  tbody tr{border-top:1px solid #1c2942} tbody tr:hover{background:#16223a}
+  td{padding:8px 12px;vertical-align:middle;white-space:nowrap}
+  td.ip{font-family:var(--mono);font-size:11.5px}
+  td.num{text-align:right;font-family:var(--mono);font-size:11.5px;font-variant-numeric:tabular-nums}
+  .pill{font-size:10px;font-family:var(--mono);padding:2px 7px;border-radius:5px;
+    border:1px solid var(--line);color:var(--muted);background:var(--panel2);white-space:nowrap}
+  .pill.new{border-color:var(--fresh);color:var(--fresh);background:#0d2a1d}
+  .pill.rare{border-color:var(--warn);color:var(--warn);background:#2a1d0d}
+  .pill.grow{border-color:var(--grow);color:var(--grow);background:#0d1c2e}
+  .pill.risk{border-color:var(--threat);color:var(--threat);background:#2a1119}
+  .svc,.days{font-family:var(--mono);font-size:11.5px}
+  .days .lo{color:var(--warn)}
+  .empty{padding:34px 20px;text-align:center;color:var(--muted);font-size:12.5px;line-height:1.9}
+  .note{padding:12px 20px;font-size:11.5px;color:var(--muted);border-top:1px solid var(--line);
+    background:#0c1422;line-height:1.8}
+  .note b{color:var(--text)}
+  .note code{font-family:var(--mono);font-size:11px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:var(--warn)}
+</style>
+</head>
+<body>
+<div class="wrap"><div class="card">
+  <header>
+    <h1>多天流量比較</h1>
+    <div class="sub">累積基準 · 出現天數 · 首見日 · 趨勢 — 一個檔案 = 一天</div>
+  </header>
+
+  <div id="drop">
+    <div class="big">拖入多天的 conn.log,或整個 /nsm/zeek/logs 資料夾</div>
+    <span id="pickFiles"><b>選檔案</b></span> · <span id="pickDir"><b>選資料夾</b></span>
+    <div class="fmt">日期自動從檔名或資料夾路徑判讀 · 支援 .log / .csv / .tsv / .gz</div>
+  </div>
+  <input type="file" id="file" multiple accept=".log,.csv,.tsv,.txt,.gz" style="display:none">
+  <input type="file" id="dir" webkitdirectory directory multiple style="display:none">
+
+  <div class="ctl" id="ctl">
+    <label>基準期 <select id="base"></select></label>
+    <label>偶發門檻 <select id="rare">
+      <option value="0.2">&lt; 20% 天數</option>
+      <option value="0.3" selected>&lt; 30% 天數</option>
+      <option value="0.5">&lt; 50% 天數</option>
+    </select></label>
+    <span class="sep"></span>
+    <label>排除埠 <input type="text" id="exPort" value="80,443" style="width:92px"></label>
+    <label><input type="checkbox" id="exExt" checked> 僅排除對外部</label>
+    <label><input type="checkbox" id="exKeep" checked> 保留有標記的列</label>
+    <span class="sep"></span>
+    <label><input type="checkbox" id="fNew"> 只看新增</label>
+    <label><input type="checkbox" id="fRare"> 只看偶發</label>
+    <label><input type="checkbox" id="fGrow"> 只看量增</label>
+    <label>搜尋 <input type="text" id="q" placeholder="IP 或服務" style="width:130px"></label>
+    <button id="csv" style="margin-left:auto">匯出 CSV</button>
+    <button id="clear">清空</button>
+  </div>
+
+  <div id="status">尚未載入資料。</div>
+  <div class="tw"><table>
+    <thead><tr id="hd"></tr></thead>
+    <tbody id="tb"></tbody>
+  </table></div>
+  <div class="note" id="note"></div>
+</div></div>
+<script>
+"use strict";
+(function(){
+  const $=id=>document.getElementById(id);
+  function ipClass(ip){
+    const m=/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(ip); if(!m) return "other";
+    const a=+m[1],b=+m[2];
+    if(a===10) return "internal";
+    if(a===172&&b>=16&&b<=31) return "internal";
+    if(a===192&&b===168) return "internal";
+    if(a===127||(a===169&&b===254)) return "internal";
+    return "external";
+  }
+  const COLOR={focus:"#f0b24a",internal:"#46b7c9",external:"#e46f56",other:"#8a93a6"};
+  const fmt=n=>{n=Math.round(n);return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g,",");};
+  const clsName=c=>({focus:"聚焦",internal:"內部",external:"外部",other:"其他"}[c]||c);
+  const esc=s=>String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+
+  function splitLine(line){const out=[];let cur="",q=false;
+    for(let i=0;i<line.length;i++){const ch=line[i];
+      if(q){if(ch==='"'){if(line[i+1]==='"'){cur+='"';i++;}else q=false;}else cur+=ch;}
+      else{if(ch==='"')q=true;else if(ch===","||ch==="\t"){out.push(cur);cur="";}else cur+=ch;}}
+    out.push(cur);return out.map(s=>s.trim());}
+
+  // ===================== 輸入解析 =====================
+  const colIdx=(header,names)=>{for(const n of names){const i=header.indexOf(n);if(i>=0)return i;}return -1;};  function parseCSV(text){
+    const all=text.split(/\r?\n/);
+    let zh=null;
+    for(const l of all){ if(l.indexOf("#fields")===0){ zh=l.replace(/^#fields\s*/,"").split("\t").map(s=>s.trim().toLowerCase()); break; } }
+    const rows=[];
+    for(const raw of all){ const l=raw.trim(); if(!l||l[0]==="#") continue; rows.push(splitLine(l)); }
+    if(!rows.length) return [];
+    const SRC=["source.ip","src_ip","id.orig_h","orig_h","client.ip","source_ip","srcip"];
+    const DST=["destination.ip","dest_ip","dst_ip","id.resp_h","resp_h","server.ip","destination_ip","dstip"];
+    const BY =["network.bytes","bytes","orig_ip_bytes","source.bytes","total.bytes","conn_bytes","doc_count","count"];
+    const BY2=["resp_ip_bytes","destination.bytes"];
+    const LAB=["service","network.protocol","proto","app"];
+    const PRT=["id.resp_p","destination.port","dest_port","dstport","resp_p","server.port"];
+    const PRO=["proto","network.transport","ip_proto","protocol"];
+    const OPR=["id.orig_p","source.port","src_port","sport","orig_p"];
+    const header = zh ? zh : rows[0].map(s=>String(s).toLowerCase());
+    const si=colIdx(header,SRC), di=colIdx(header,DST);
+    let sI=0,dI=1,wI=2,wI2=-1,labI=3,start=0;
+    let prtI=-1,proI=-1,oprI=-1;
+    if(si>=0&&di>=0){ sI=si;dI=di;wI=colIdx(header,BY);wI2=colIdx(header,BY2);labI=colIdx(header,LAB);
+      prtI=colIdx(header,PRT); proI=colIdx(header,PRO); oprI=colIdx(header,OPR); start=zh?0:1; }
+    else{
+      // 沒有標題列 (zeek-cut 輸出、awk 產的 CSV):靠內容猜哪一欄是流量、port、服務名
+      const samp=rows.slice(0,50).filter(r=>r.length>2);
+      const ncol=Math.max(...samp.map(r=>r.length),0);
+      let bytesC=-1,portC=-1,textC=-1,bestMax=-1;
+      for(let c=2;c<ncol;c++){
+        let num=0,txt=0,mx=0,tot=0;
+        for(const r of samp){ const v=(r[c]||"").trim(); if(!v) continue; tot++;
+          if(/^\d+(\.\d+)?$/.test(v)){ num++; mx=Math.max(mx,parseFloat(v)); } else txt++; }
+        if(!tot) continue;
+        if(num/tot>=0.8){
+          if(mx>65535){ if(mx>bestMax){bestMax=mx;bytesC=c;} }        // 值很大 -> 流量
+          else if(portC<0) portC=c;                                    // 都在 port 範圍 -> 埠號
+        }else if(txt/tot>=0.6&&textC<0) textC=c;                       // 多為文字 -> 服務名
+      }
+      // 流量欄沒把握時沿用文件的第 3 欄;若第 3 欄其實是 port,就別拿它當流量
+      if(bytesC<0) bytesC=(portC===2?-1:2);
+      wI=bytesC; prtI=portC; labI=textC;
+    }
+    const edges=[];
+    for(let r=start;r<rows.length;r++){
+      const p=rows[r];
+      const src=(p[sI]||"").trim(), dst=(p[dI]||"").trim();
+      if(!src||!dst||!/[.:]/.test(src)||!/[.:]/.test(dst)) continue;
+      let w=1;
+      if(wI>=0&&p[wI]!=null&&p[wI]!==""){const n=parseFloat(String(p[wI]).replace(/[, ]/g,""));if(!isNaN(n))w=n;}
+      if(wI2>=0&&p[wI2]!=null&&p[wI2]!==""){const n2=parseFloat(String(p[wI2]).replace(/[, ]/g,""));if(!isNaN(n2))w+=n2;}
+      const svc=(labI>=0&&p[labI]!=null)?String(p[labI]).trim():"";
+      const prt=(prtI>=0&&p[prtI]!=null)?String(p[prtI]).trim():"";
+      const pro=(proI>=0&&p[proI]!=null)?String(p[proI]).trim():"";
+      const opr=(oprI>=0&&p[oprI]!=null)?String(p[oprI]).trim():"";
+      const label=(svc||prt||pro)?svcWithPort(svc,prt,pro,opr):"";
+      edges.push({src,dst,w,label:(label==="-"?"":label)});
+    }
+    return edges;
+  }  const PORTSVC={
+    // --- 基本網路 / 網際網路 ---
+    20:"FTP-Data",21:"FTP",22:"SSH",23:"Telnet",25:"SMTP",37:"Time",42:"WINS",43:"WHOIS",
+    49:"TACACS+",53:"DNS",67:"DHCP",68:"DHCP",69:"TFTP",79:"Finger",80:"HTTP",88:"Kerberos",
+    102:"S7comm/ISO-TSAP",110:"POP3",111:"RPCbind",119:"NNTP",123:"NTP",135:"MS-RPC",
+    137:"NetBIOS-NS",138:"NetBIOS-DGM",139:"NetBIOS-SSN",143:"IMAP",161:"SNMP",162:"SNMP-Trap",
+    179:"BGP",194:"IRC",389:"LDAP",443:"HTTPS",445:"SMB",464:"Kerberos-PW",465:"SMTPS",
+    500:"IKE/IPsec",514:"Syslog",515:"LPD",520:"RIP",546:"DHCPv6",547:"DHCPv6",548:"AFP",
+    554:"RTSP",587:"SMTP-Submission",593:"RPC-over-HTTP",623:"IPMI",636:"LDAPS",989:"FTPS-Data",
+    990:"FTPS",993:"IMAPS",995:"POP3S",
+    // --- Windows / AD ---
+    3268:"AD-GlobalCatalog",3269:"AD-GlobalCatalog-SSL",5985:"WinRM",5986:"WinRM-TLS",
+    9389:"AD-WebServices",47001:"WinRM-Listener",
+    // --- 遠端存取 / 檔案共享 ---
+    873:"rsync",1194:"OpenVPN",1701:"L2TP",1723:"PPTP",2049:"NFS",3389:"RDP",4500:"IPsec-NAT-T",
+    5800:"VNC-HTTP",5900:"VNC",5901:"VNC",5902:"VNC",5938:"TeamViewer",
+    // --- 資料庫 ---
+    1433:"MSSQL",1434:"MSSQL-Browser",1521:"Oracle",3050:"Firebird",3306:"MySQL",5432:"PostgreSQL",
+    5984:"CouchDB",6379:"Redis",7000:"Cassandra",9042:"Cassandra",9200:"Elasticsearch",
+    9300:"Elasticsearch",11211:"Memcached",27017:"MongoDB",50000:"DB2",
+    // --- Web / 應用 ---
+    3000:"HTTP-Alt",5000:"HTTP-Alt",8000:"HTTP-Alt",8008:"HTTP-Alt",8080:"HTTP-Proxy",
+    8081:"HTTP-Alt",8088:"HTTP-Alt",8443:"HTTPS-Alt",8888:"HTTP-Alt",9090:"HTTP-Admin",
+    // --- 郵件 / 目錄 / 語音 ---
+    1719:"H.323",1720:"H.323",3478:"STUN/TURN",5060:"SIP",5061:"SIP-TLS",
+    // --- 訊息佇列 / IoT ---
+    1883:"MQTT",5672:"AMQP",8883:"MQTT-TLS",9092:"Kafka",61616:"ActiveMQ",
+    // --- 醫療 ---
+    104:"DICOM",2575:"HL7",2761:"DICOM",2762:"DICOM-TLS",6661:"HL7",11112:"DICOM",
+    // --- OT / ICS ---
+    502:"Modbus",789:"RedLion",1911:"Niagara-Fox",2222:"EtherNet/IP-IO",2404:"IEC-104",
+    4911:"Niagara-Fox-TLS",9600:"Omron-FINS",20000:"DNP3",44818:"EtherNet/IP",47808:"BACnet",
+    // --- 資安產品 / 端點管理 ---
+    4343:"TrendMicro-OfficeScan",8014:"Symantec-SEPM",8082:"McAfee-ePO-Broadcast",
+    8190:"Sophos",8194:"Sophos",13000:"Kaspersky-KSC",13291:"Kaspersky-KSC",
+    14000:"Kaspersky-KSC",17472:"Tanium",
+    // --- 備份 / 虛擬化 / 管理 ---
+    902:"VMware-ESXi",903:"VMware-Console",1556:"NetBackup",5480:"VMware-VAMI",
+    8006:"Proxmox",9392:"Veeam",9393:"Veeam-Catalog",10000:"Webmin/NDMP",13720:"NetBackup",
+    13724:"NetBackup",
+    // --- 常見惡意/可疑用埠 ---
+    1337:"Suspicious-1337",4444:"Metasploit",5555:"ADB/Backdoor",6666:"IRC/Backdoor",
+    6667:"IRC",9001:"Tor",12345:"NetBus",31337:"BackOrifice",
+    // --- 其他 ---
+    6881:"BitTorrent",8291:"MikroTik-Winbox"
+  };
+  // 醫療網路裡出現在不該出現的路徑上就值得看的服務
+  const RISKY=new Set([21,22,23,69,135,137,138,139,445,512,513,514,1337,3389,4444,5555,
+    5800,5900,5901,5902,5938,5985,5986,6666,6667,9001,12345,31337,47001]);
+  // 標籤一律「埠號 服務名」;查不到就「埠號 unknown」,非標準 port 才不會消失
+  const portLabel=p=>{p=+p; if(!p||p<0||p>65535) return ""; return PORTSVC[p]?(p+" "+PORTSVC[p]):(p+" unknown");};
+  function serviceName(sp,dp){
+    if(PORTSVC[dp]) return portLabel(dp);
+    if(PORTSVC[sp]) return portLabel(sp);
+    // 兩邊都不認得:高位的多半是隨機的來源埠,取較小的那個當服務埠
+    const p=(sp&&dp)?Math.min(sp,dp):(dp||sp);
+    return p?portLabel(p):"";
+  }
+  // 純數字的標籤(Kibana 的 destination.port、Zeek 的 id.resp_p)也轉成同一格式
+  const normLabel=s=>{const t=String(s).trim(); return /^\d{1,5}$/.test(t)?portLabel(t):t;};
+  // ICMP 沒有 port。Zeek 會把 ICMP type 塞進 id.orig_p、code 塞進 id.resp_p,
+  // 直接當埠號會變成「3 icmp」這種誤導的標籤,所以獨立處理。
+  const ICMPTYPE={0:"Echo Reply",3:"目的不可達",4:"Source Quench",5:"Redirect",8:"Echo Request",
+    9:"Router Ad",10:"Router Sol",11:"逾時(Time Exceeded)",12:"參數錯誤",13:"Timestamp",
+    14:"Timestamp Reply",17:"Address Mask",18:"Address Mask Reply"};
+  const isICMP=s=>/^icmp/i.test(String(s||"").trim());
+  // 服務名 + 埠號合併成一個標籤。內建認得的埠一律用內建名稱,來源不同才不會出現兩種寫法
+  function svcWithPort(name,port,proto,origPort){
+    const p=+port, nm=(name==null?"":String(name).trim());
+    // ICMP:port 欄位其實是 type/code,不能當埠號。Zeek 的 id.orig_p 才是 type
+    if(isICMP(proto)||isICMP(nm)){
+      const raw=(origPort==null?"":String(origPort).trim());
+      if(!/^\d+$/.test(raw)) return "ICMP";        // 沒有 type 欄位就不要瞎猜
+      const t=+raw;
+      return ICMPTYPE[t] ? ("ICMP "+t+" "+ICMPTYPE[t]) : ("ICMP type "+t);
+    }
+    const valid=p>0&&p<=65535;
+    if(valid&&PORTSVC[p]) return portLabel(p);          // 104 DICOM
+    if(valid&&nm&&nm!=="-") return p+" "+nm;            // 8291 winbox
+    if(valid) return portLabel(p);                       // 8291 unknown
+    return (nm&&nm!=="-")?nm:"";                         // 只有服務名可用
+  }  async function filesFromDataTransfer(dt){
+    const out=[];
+    const items=dt.items;
+    if(items&&items.length&&items[0].webkitGetAsEntry){
+      const entries=[];
+      for(const it of items){ const en=it.webkitGetAsEntry&&it.webkitGetAsEntry(); if(en) entries.push(en); }
+      const walk=async en=>{
+        if(en.isFile){ await new Promise(res=>en.file(f=>{out.push(f);res();},()=>res())); }
+        else if(en.isDirectory){
+          const rd=en.createReader();
+          for(;;){
+            const batch=await new Promise(res=>rd.readEntries(res,()=>res([])));
+            if(!batch.length) break;
+            for(const b of batch) await walk(b);
+          }
+        }
+      };
+      for(const en of entries) await walk(en);
+    }
+    return out.length?out:[...dt.files];
+  }
+  // ===================== 日期判讀 =====================
+  // SO 的路徑是 /nsm/zeek/logs/2026-07-22/conn.log,日期在資料夾名;
+  // 拖資料夾時 webkitRelativePath 保得住,所以路徑優先於檔案時間。
+  function dateFrom(path,fallbackMs){
+    const s=String(path||"");
+    const m=/(20\d{2})[-_.]?(\d{2})[-_.]?(\d{2})/.exec(s);
+    if(m){
+      const mo=+m[2], d=+m[3];
+      if(mo>=1&&mo<=12&&d>=1&&d<=31) return `${m[1]}-${m[2]}-${m[3]}`;
+    }
+    const t=fallbackMs?new Date(fallbackMs):null;
+    if(t&&!isNaN(t)) return t.toISOString().slice(0,10);
+    return "";
+  }
+
+  // ===================== 狀態 =====================
+  let byKey=new Map();      // "src\0dst\0svc" -> {src,dst,svc,port,byDay:Map<date,bytes>}
+  let allDays=[];
+  let sortKey="auto", sortDir=1;
+
+  const SEP=" ";
+  const fmtSize=n=>n>=1073741824?(n/1073741824).toFixed(1)+" GB"
+                  :(n>=1048576?(n/1048576).toFixed(1)+" MB"
+                  :(n>=1024?(n/1024).toFixed(1)+" KB":Math.round(n)+" B"));
+
+  // ===================== 載入 =====================
+  async function gunzip(buf){
+    if(typeof DecompressionStream==="undefined") throw new Error("此瀏覽器不支援 gzip,請先解開 .gz");
+    const st=new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"));
+    return await new Response(st).arrayBuffer();
+  }
+  const isGzip=b=>{ if(b.byteLength<2) return false; const u=new Uint8Array(b,0,2); return u[0]===0x1f&&u[1]===0x8b; };
+
+  async function loadFiles(list){
+    const files=[...list].filter(f=>f&&f.size>0);
+    if(!files.length) return;
+    const days=new Set(); let ok=0,fail=0,rows=0;
+    const t0=performance.now();
+    for(let i=0;i<files.length;i++){
+      const f=files[i];
+      status(`解析中… (${i+1}/${files.length}) ${esc(f.name)}`);
+      await new Promise(r=>setTimeout(r,0));
+      try{
+        let buf=await f.arrayBuffer();
+        if(isGzip(buf)) buf=await gunzip(buf);
+        const text=new TextDecoder("utf-8",{fatal:false}).decode(buf);
+        const edges=parseCSV(text);
+        if(!edges||!edges.length){ fail++; continue; }
+        const path=f.webkitRelativePath||f.name;
+        const day=dateFrom(path,f.lastModified)||("檔案"+(i+1));
+        days.add(day);
+        for(const e of edges){
+          rows++;
+          const svc=normLabel(e.label||"")||"(無服務資訊)";
+          const k=e.src+SEP+e.dst+SEP+svc;
+          let o=byKey.get(k);
+          if(!o){
+            const pm=/^(\d{1,5})\s/.exec(svc);
+            o={src:e.src,dst:e.dst,svc,port:pm?pm[1]:"",byDay:new Map()};
+            byKey.set(k,o);
+          }
+          o.byDay.set(day,(o.byDay.get(day)||0)+e.w);
+        }
+        ok++;
+      }catch(err){ fail++; }
+    }
+    if(!byKey.size){ status("沒有解析到任何連線資料(檔案格式不符?)",true); return; }
+    allDays=[...new Set(allDays.concat([...days]))].sort();
+    const ms=Math.round(performance.now()-t0);
+    status(`${ok} 個檔案 · ${allDays.length} 天 · ${fmt(rows)} 筆 → ${fmt(byKey.size)} 條連線 (${ms}ms)`+
+           (fail?` · ${fail} 個略過`:""));
+    buildBaseOptions();
+    $("ctl").classList.add("on");
+    render();
+  }
+
+  function buildBaseOptions(){
+    const sel=$("base"), cur=sel.value;
+    sel.innerHTML="";
+    const max=Math.max(1,allDays.length-1);
+    for(let i=1;i<=max;i++){
+      const o=document.createElement("option");
+      o.value=String(i); o.textContent="前 "+i+" 天";
+      sel.appendChild(o);
+    }
+    sel.value=(cur&&+cur<=max)?cur:String(Math.min(max,Math.max(1,Math.ceil(allDays.length*0.6))));
+  }
+
+  // ===================== 計算 =====================
+  function rowsOf(){
+    const N=allDays.length;
+    const baseN=parseInt($("base").value,10)||1;
+    const rareTh=parseFloat($("rare").value)||0.3;
+    const th=Math.max(1,Math.floor(N/3));
+    return [...byKey.values()].map(o=>{
+      const by=allDays.map(d=>o.byDay.get(d)||0);
+      const seen=[]; let total=0;
+      by.forEach((v,i)=>{ if(v>0){seen.push(i); total+=v;} });
+      const first=seen.length?seen[0]:-1, last=seen.length?seen[seen.length-1]:-1;
+      const early=by.slice(0,th).reduce((a,b)=>a+b,0)/th;
+      const late =by.slice(-th).reduce((a,b)=>a+b,0)/th;
+      // 量增要求前段 > 0,否則那叫「新增」不叫「成長」
+      const growX = early>0 ? late/early : 0;
+      return Object.assign({},o,{by,total,days:seen.length,first,last,
+        isNew:first>=baseN,
+        isRare:seen.length>0&&(seen.length/N)<rareTh,
+        risky:RISKY.has(+o.port),
+        isGrow:growX>=3&&late>0,
+        growX});
+    });
+  }
+
+  function visible(){
+    let list=rowsOf();
+    const ex=new Set($("exPort").value.split(/[,\s]+/).filter(Boolean));
+    const exExt=$("exExt").checked, keepFlag=$("exKeep").checked;
+    let hidden=0;
+    if(ex.size){
+      list=list.filter(r=>{
+        if(!r.port||!ex.has(r.port)) return true;
+        if(exExt&&ipClass(r.dst)==="internal") return true;                 // 內網的留著
+        if(keepFlag&&(r.isNew||r.isRare||r.risky||r.isGrow)) return true;   // 有訊號的不藏
+        hidden++; return false;
+      });
+    }
+    if($("fNew").checked)  list=list.filter(r=>r.isNew);
+    if($("fRare").checked) list=list.filter(r=>r.isRare);
+    if($("fGrow").checked) list=list.filter(r=>r.isGrow);
+    const q=$("q").value.trim().toLowerCase();
+    if(q) list=list.filter(r=>(r.src+r.dst+r.svc).toLowerCase().indexOf(q)>=0);
+    const score=r=>(r.isNew?4:0)+(r.isGrow?3:0)+(r.isRare?2:0)+(r.risky?1:0);
+    list.sort((a,b)=>{
+      if(sortKey==="auto"){
+        const d=score(b)-score(a); if(d) return d;
+        return a.days-b.days;
+      }
+      const va=a[sortKey],vb=b[sortKey];
+      if(typeof va==="number") return (va-vb)*sortDir;
+      return String(va).localeCompare(String(vb))*sortDir;
+    });
+    return {list,hidden};
+  }
+
+  // ===================== 繪製 =====================
+  const COLS=[["判定",null],["服務","svc"],["來源","src"],["目的","dst"],
+              ["出現天數","days"],["首見","first"],["末見","last"],["趨勢",null],["總流量","total"]];
+
+  function spark(by,w,h){
+    const max=Math.max.apply(null,by.concat([1])), bw=w/Math.max(1,by.length);
+    let s=`<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`;
+    by.forEach((v,i)=>{
+      const bh=v>0?Math.max(2,(v/max)*(h-3)):2;
+      s+=`<rect x="${(i*bw+0.6).toFixed(1)}" y="${(h-bh).toFixed(1)}" width="${Math.max(1,bw-1.2).toFixed(1)}" height="${bh.toFixed(1)}" fill="${v>0?"#46b7c9":"#26344e"}" rx="1"/>`;
+    });
+    return s+"</svg>";
+  }
+
+  function render(){
+    if(!byKey.size){ $("tb").innerHTML=""; $("hd").innerHTML=""; return; }
+    const r0=visible(), list=r0.list, hidden=r0.hidden;
+    const N=allDays.length;
+
+    $("hd").innerHTML=COLS.map(c=>
+      `<th data-k="${c[1]||""}">${c[0]}${c[1]&&sortKey===c[1]?` <span class="ar">${sortDir>0?"▲":"▼"}</span>`:""}</th>`).join("");
+    $("hd").querySelectorAll("th[data-k]").forEach(th=>{
+      const k=th.dataset.k; if(!k) return;
+      th.addEventListener("click",()=>{ if(sortKey===k) sortDir=-sortDir; else{sortKey=k;sortDir=1;} render(); });
+    });
+
+    $("tb").innerHTML=list.length?list.map(r=>{
+      const p=[];
+      if(r.isNew)  p.push('<span class="pill new">新增</span>');
+      if(r.isGrow) p.push(`<span class="pill grow">量增 ${r.growX>=100?"99+":Math.round(r.growX)}x</span>`);
+      if(r.isRare) p.push('<span class="pill rare">偶發</span>');
+      if(r.risky)  p.push('<span class="pill risk">高風險</span>');
+      if(!p.length) p.push('<span class="pill">例行</span>');
+      return `<tr>
+        <td>${p.join(" ")}</td>
+        <td class="svc">${esc(r.svc)}</td>
+        <td class="ip">${esc(r.src)}</td>
+        <td class="ip">${esc(r.dst)}</td>
+        <td class="days"><span class="${r.isRare?"lo":""}">${r.days}</span><span style="color:var(--muted)">/${N}</span></td>
+        <td class="ip">${r.first>=0?esc(allDays[r.first]):"—"}</td>
+        <td class="ip">${r.last>=0?esc(allDays[r.last]):"—"}</td>
+        <td>${spark(r.by,Math.min(150,Math.max(60,N*11)),22)}</td>
+        <td class="num">${fmtSize(r.total)}</td>
+      </tr>`;
+    }).join("") : '<tr><td colspan="9" class="empty">沒有符合條件的列。</td></tr>';
+
+    const all=rowsOf();
+    $("status").innerHTML=
+      `${N} 天(${esc(allDays[0]||"")} ~ ${esc(allDays[N-1]||"")}) · `+
+      `<b style="color:var(--text)">${fmt(byKey.size)}</b> 條連線 · `+
+      `<b>新增 ${all.filter(r=>r.isNew).length}</b> · `+
+      `<span class="g">量增 ${all.filter(r=>r.isGrow).length}</span> · `+
+      `<span class="w">偶發 ${all.filter(r=>r.isRare).length}</span> · `+
+      `顯示 ${fmt(list.length)} 列`+(hidden?` · 已隱藏 ${hidden} 列(排除埠)`:"");
+
+    const rt=Math.round((parseFloat($("rare").value)||0.3)*100);
+    $("note").innerHTML=
+      `<b>新增</b> = 首見日在基準期之後　<b>量增</b> = 後段平均比前段成長 ≥3 倍(前段須 &gt;0)　`+
+      `<b>偶發</b> = 出現天數 &lt; <code>${rt}%</code>　<b>例行</b> = 什麼都沒中<br>`+
+      `<b>排除埠只藏純雜訊</b>:勾「保留有標記的列」時,有任一標記的不會被藏 —— `+
+      `否則走 443 的外流會被一起藏掉。「僅排除對外部」讓內網的 80/443(常是設備管理介面)留下。<br>`+
+      `<b>偶發看不出規律性</b>:每週固定跑一次的備份與隨機冒出的異常同樣被標偶發。`+
+      `標記是用來<b>排序</b>的,不是用來下結論的。`;
+  }
+
+  function toCSV(){
+    const list=visible().list;
+    if(!list.length){ status("目前沒有可匯出的列。",true); return; }
+    const q=s=>{ s=String(s==null?"":s); return /[",\r\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
+    const head=["判定","服務","來源","目的","出現天數","總天數","首見","末見","總流量位元組","成長倍數"].concat(allDays);
+    const lines=[head.map(q).join(",")];
+    for(const r of list){
+      const flags=[r.isNew?"新增":"",r.isGrow?"量增":"",r.isRare?"偶發":"",r.risky?"高風險":""]
+                    .filter(Boolean).join("/")||"例行";
+      lines.push([flags,r.svc,r.src,r.dst,r.days,allDays.length,
+        r.first>=0?allDays[r.first]:"", r.last>=0?allDays[r.last]:"",
+        Math.round(r.total), r.growX?r.growX.toFixed(1):""]
+        .concat(r.by.map(v=>Math.round(v))).map(q).join(","));
+    }
+    // UTF-8 BOM + CRLF,Excel 開中文才正常
+    const blob=new Blob(["﻿"+lines.join("\r\n")+"\r\n"],{type:"text/csv;charset=utf-8"});
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(blob);
+    a.download="daily-compare-"+(allDays[0]||"").replace(/-/g,"")+"-"+(allDays[allDays.length-1]||"").replace(/-/g,"")+".csv";
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+    status(`已匯出 ${fmt(list.length)} 列 → ${esc(a.download)}`);
+  }
+
+  function status(msg,err){ const s=$("status"); s.innerHTML=msg||""; s.className=err?"err":""; }
+
+  // ===================== 事件 =====================
+  const drop=$("drop");
+  $("pickFiles").addEventListener("click",e=>{e.stopPropagation();$("file").click();});
+  $("pickDir").addEventListener("click",e=>{e.stopPropagation();$("dir").click();});
+  drop.addEventListener("click",()=>$("file").click());
+  $("file").addEventListener("change",e=>{ if(e.target.files.length) loadFiles(e.target.files); });
+  $("dir").addEventListener("change",e=>{ if(e.target.files.length) loadFiles(e.target.files); });
+  ["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("over");}));
+  ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("over");}));
+  drop.addEventListener("drop",async e=>{ const fs=await filesFromDataTransfer(e.dataTransfer); if(fs.length) loadFiles(fs); });
+  ["dragover","drop"].forEach(ev=>window.addEventListener(ev,e=>e.preventDefault()));
+
+  ["base","rare","exExt","exKeep","fNew","fRare","fGrow"].forEach(id=>
+    $(id).addEventListener("change",render));
+  ["q","exPort"].forEach(id=>$(id).addEventListener("input",render));   // 文字框要 input 才即時
+  $("csv").addEventListener("click",toCSV);
+  $("clear").addEventListener("click",()=>{
+    byKey=new Map(); allDays=[]; sortKey="auto"; sortDir=1;
+    $("ctl").classList.remove("on");
+    $("tb").innerHTML=""; $("hd").innerHTML=""; $("note").innerHTML="";
+    status("已清空。");
+  });
+
+  if(typeof module!=="undefined"&&module.exports){
+    module.exports={dateFrom,parseCSV,normLabel,portLabel,svcWithPort,ipClass,splitLine,PORTSVC,RISKY};
+  }
+})();
+</script>
+</body>
+</html>
