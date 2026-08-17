@@ -10,7 +10,7 @@ PowerShell 腳本用 Windows 內建的就能跑。適合受管制或 air-gapped 
 | **`graph/`** | `ip-graph.html` — 網路流量關聯圖工具(主要產出) |
 | **`assets/`** | 資產盤點:從防火牆設定擷取 IP↔設備名稱,並合併進既有 Excel 資產表 |
 | **`hunting/`** | `threat-hunting-kql.md` — Security Onion / Kibana 的威脅獵捕 KQL 手冊 |
-| **`intel/`** | `malicious-ip.txt` — 高信度惡意 IP 清單,供關聯圖標記威脅 |
+| **`intel/`** | 惡意 IP 清單,以及批次查 public IP 屬於誰的工具 |
 
 ---
 
@@ -147,6 +147,41 @@ Alt+F11 → 插入模組 → 貼上 → 改最上面的工作表名稱設定 →
 
 > 手冊第 0 節先教你確認自己環境的欄位名稱 —— 不同 SO 版本欄位不同,
 > 查詢跑出 0 筆時第一個要懷疑的就是欄名。
+
+---
+
+# intel/ — IP 情資
+
+| 檔案 | 用途 |
+|---|---|
+| `malicious-ip.txt` | 高信度惡意 IP 清單,貼進關聯圖的「威脅情資」欄位 |
+| `Get-IpOwner.ps1` | 批次查一堆 public IP 分別屬於誰,產出 CSV |
+
+## 批次查 public IP 是誰
+
+圖上的外部 IP 只是一串數字,知道是誰之後意義差很多:
+**「醫療設備連到 VPS 供應商」** 比 **「醫療設備連到 203.0.113.7」** 有用得多。
+
+```powershell
+# 從檔案讀(可直接餵工具匯出的 CSV,會自動抓每行第一個 IP)
+.\intel\Get-IpOwner.ps1 -InFile public-ips.txt -OutFile owners.csv
+
+# 或直接給
+.\intel\Get-IpOwner.ps1 -Ip 8.8.8.8,104.131.0.5 -OutFile owners.csv
+```
+
+用 **RDAP**(WHOIS 的現代版):HTTPS、免註冊、免 API key,查的是各區域註冊機構的權威資料。
+**私有位址會自動跳過**,不送出查詢。
+
+輸出欄位:`IP, 組織, 網段名稱, 國家, 網段, 註冊機構, 分類, 狀態`,
+並自動分類成 **雲端/VPS**、**CDN**、**ISP/電信** —— **雲端/VPS 排最前面**,
+因為 C2 與惡意基礎設施最常架在那裡。
+
+**要在有網路的機器上跑**,產出的 CSV 帶回離線環境即可。
+
+> 隱私提醒:查詢會把「目的地 IP」送到公開註冊資料庫。查的是對方的登記資料,
+> 不會洩漏你的內網位址,但等於告訴外部有人在查這個 IP。這是 SOC 標準做法,
+> 若你的規範不允許,請改用離線的 IP-to-ASN 資料集。
 
 ## 授權
 
