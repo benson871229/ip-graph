@@ -352,6 +352,20 @@ function Build-Table([string]$root) {
 }
 
 # --------------------------------------------------------------------------- #
+#  輸出 CSV
+# --------------------------------------------------------------------------- #
+# Excel 要靠 BOM 才知道檔案是 UTF-8,沒有 BOM 中文欄名會變亂碼。
+# 但 -Encoding UTF8 在 5.1 是「含 BOM」、在 7 以後變成「不含 BOM」,同一句話兩種結果,
+# 所以這裡明講要哪一種,不靠版本預設。
+function Export-CsvUtf8Bom($data, [string]$path) {
+    if ($PSVersionTable.PSVersion.Major -ge 6) {
+        $data | Export-Csv -LiteralPath $path -NoTypeInformation -Encoding utf8BOM
+    } else {
+        $data | Export-Csv -LiteralPath $path -NoTypeInformation -Encoding UTF8
+    }
+}
+
+# --------------------------------------------------------------------------- #
 #  查詢:最長前綴優先(ARIN 的上下層都在表裡,要取最精確的那筆)
 # --------------------------------------------------------------------------- #
 function Get-FirstIP([string]$s) {
@@ -432,7 +446,7 @@ else {
     if (-not (Test-Path -LiteralPath $root)) { Write-Error "找不到目錄: $root"; exit 1 }
 
     $db = @(Build-Table $root)
-    $db | Export-Csv -LiteralPath $OutFile -NoTypeInformation -Encoding UTF8
+    Export-CsvUtf8Bom $db $OutFile
     Write-Host "已輸出對照表: $OutFile" -ForegroundColor Green
 
     if ($tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
@@ -498,7 +512,7 @@ $sorted = $hits | Sort-Object @{ Expression = { if ($_.狀態 -eq '命中') { 0 
                               @{ Expression = { $order["$($_.分類)"] } }, 組織, IP
 
 if ($MatchOut) {
-    $sorted | Export-Csv -LiteralPath $MatchOut -NoTypeInformation -Encoding UTF8
+    Export-CsvUtf8Bom $sorted $MatchOut
     Write-Host "比對結果已輸出: $MatchOut" -ForegroundColor Green
 } else {
     # 指定寬度:非互動主控台(排程、重導向)的預設寬度可能是 0,直接 Format-Table 會印出空白
