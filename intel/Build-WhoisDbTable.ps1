@@ -340,15 +340,19 @@ function Build-Table([string]$root) {
             網段 = $k; 起始IP = $start; 結束IP = $end
             組織 = $r.Org; 網段名稱 = $r.Name; 國家 = $r.Country
             註冊機構 = $r.Source; 分類 = (Get-Category "$($r.Org) $($r.Name)")
-            _s = $sortKey; _e = $endKey
+            # 給 Excel 用的三欄。Excel 沒辦法直接拿 IP 去對 CIDR,得先換成整數比大小。
+            # 網段大小是為了處理巢狀:表裡同一個 IP 可能落在好幾個網段裡
+            # (ARIN 會把上層配置和下層指派一起回),挑「大小最小」的那筆才是最精確的擁有者。
+            起始數值 = [int64]$sortKey; 結束數值 = [int64]$endKey
+            網段大小 = [int64]($endKey - $sortKey + 1)
         })
     }
     Write-Host ("掃描 {0} 個檔 · 解析出 {1} 筆記錄 · 去重後 {2} 個網段" -f
         $script:fileCount, $script:recCount, $rows.Count) -ForegroundColor Green
-    # 起點小的在前;起點相同時大的網段在前(上層配置排在它底下的指派之前)。
     # 一定要有第二排序鍵,否則同起點的先後取決於雜湊表列舉順序,每次跑結果會不一樣。
-    return ($rows | Sort-Object @{Expression='_s'}, @{Expression='_e'; Descending=$true} |
-            Select-Object * -ExcludeProperty _s, _e)
+    # 起點小的在前;起點相同時大的網段在前(上層配置排在它底下的指派之前)。
+    # VLOOKUP 近似比對要求查詢欄由小到大,所以這個排序也是 Excel 能用的前提。
+    return ($rows | Sort-Object 起始數值, @{Expression='結束數值'; Descending=$true})
 }
 
 # --------------------------------------------------------------------------- #
