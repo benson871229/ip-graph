@@ -209,9 +209,10 @@ if ($OutFile) {
     $sorted | Format-Table -AutoSize
 }
 
-$cloud = @($results | Where-Object { $_.分類 -eq '雲端/VPS' }).Count
+# 不能叫 $cloud —— PowerShell 變數不分大小寫,那會蓋掉上面分類用的 $CLOUD 規則
+$cloudCount = @($results | Where-Object { $_.分類 -eq '雲端/VPS' }).Count
 Write-Host ("成功 {0} · 失敗 {1}{2}" -f $okCount, $failCount,
-    $(if ($cloud) { " · 其中 $cloud 個是雲端/VPS,建議優先查看" } else { "" })) `
+    $(if ($cloudCount) { " · 其中 $cloudCount 個是雲端/VPS,建議優先查看" } else { "" })) `
     -ForegroundColor $(if ($failCount) { 'Yellow' } else { 'Green' })
 if ($failCount -gt 0) {
     Write-Host "失敗多半是速率限制,可加大 -DelayMs 後只重跑失敗的那幾個。" -ForegroundColor Yellow

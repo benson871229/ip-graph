@@ -155,7 +155,8 @@ Alt+F11 → 插入模組 → 貼上 → 改最上面的工作表名稱設定 →
 | 檔案 | 用途 |
 |---|---|
 | `malicious-ip.txt` | 高信度惡意 IP 清單,貼進關聯圖的「威脅情資」欄位 |
-| `Get-IpOwner.ps1` | 批次查一堆 public IP 分別屬於誰,產出 CSV |
+| `Get-IpOwner.ps1` | 走 RDAP **即時**查一堆 public IP 分別屬於誰,產出 CSV |
+| `Build-WhoisDbTable.ps1` | 把公開的 WHOIS-DB repo 爬成一張**離線**的「網段 → 所屬機關」對照表,並可直接比對 IP |
 
 ## 批次查 public IP 是誰
 
@@ -182,6 +183,38 @@ Alt+F11 → 插入模組 → 貼上 → 改最上面的工作表名稱設定 →
 > 隱私提醒:查詢會把「目的地 IP」送到公開註冊資料庫。查的是對方的登記資料,
 > 不會洩漏你的內網位址,但等於告訴外部有人在查這個 IP。這是 SOC 標準做法,
 > 若你的規範不允許,請改用離線的 IP-to-ASN 資料集。
+
+## 離線對照表:把 WHOIS-DB 整包爬成一張表
+
+上面那支要連外。如果連查詢本身都不想送出去,`Build-WhoisDbTable.ps1` 把公開的
+[WAFLogic/WHOIS-DB](https://github.com/WAFLogic/WHOIS-DB) 整包爬成一張離線對照表:
+
+```powershell
+# 有網路的機器:建表(實測 539 個網段)
+.\intel\Build-WhoisDbTable.ps1 -Download -OutFile whoisdb-ranges.csv
+
+# 沒網路也行:自己抓 ZIP 解壓後指過去
+.\intel\Build-WhoisDbTable.ps1 -RepoPath C:\tmp\WHOIS-DB-main -OutFile whoisdb-ranges.csv
+
+# 內網離線:拿建好的表比對 IP(可直接餵關聯圖匯出的 CSV)
+.\intel\Build-WhoisDbTable.ps1 -Table whoisdb-ranges.csv -InFile public-ips.txt -MatchOut who.csv
+```
+
+那個 repo 的資料散在好幾層,而且每家註冊機構的欄位名稱都不一樣
+(ARIN 用 `NetRange`/`Organization`、RIPE/APNIC 用 `inetnum`/`descr`、LACNIC 用 `owner`/`inetrev`,
+APNIC 系甚至把網段藏在 `% Information related to` 註解行),大宗資料還壓在 zip 裡。
+這支全部走一遍(zip 不落地解壓),統一成
+`網段 / 起始IP / 結束IP / 組織 / 網段名稱 / 國家 / 註冊機構 / 分類`。
+
+比對用**最長前綴**:ARIN 一次會回整條授權鏈,所以表裡同時有 `23.19.0.0/16`(Nobis)
+和 `23.19.0.0/19`(Ubiquity),查 `23.19.0.5` 會給你比較精確的後者。私有位址自動跳過。
+
+> **這張表是線索,不是權威。** repo 最後更新是 2023-05,裡面的 WHOIS 檔案時間戳是 2015,
+> 全表只有 539 個網段,而且偏 2015 年前後的惡意基礎設施(所以命中率意外地不差,
+> 但 `8.8.8.8` 會查成 Level 3 —— 那是它以前的持有者)。
+> **命中當成一條可查的方向,查不到很正常**,要權威資料請用上面的 `Get-IpOwner.ps1`。
+>
+> 該 repo 沒有附授權條款,所以這裡只放腳本、不轉存它的資料;要用請自己抓。
 
 ## 授權
 
