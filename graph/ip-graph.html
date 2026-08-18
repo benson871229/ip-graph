@@ -38,6 +38,8 @@
   #drop #pickFiles:hover b,#drop #pickDir:hover b{text-decoration:underline}
   #drop .big{font-size:13px;color:var(--text);margin-bottom:3px}
   #drop .fmt{font-size:10.5px;font-family:var(--mono);margin-top:5px;opacity:.75}
+  #srcbox{margin-top:8px;padding:7px 9px;border:1px solid var(--line);border-radius:6px;
+    background:var(--panel2);font:11px/1.6 var(--mono);color:var(--muted);word-break:break-all}
 
   textarea{width:100%;resize:vertical;background:var(--bg);color:var(--text);
     border:1px solid var(--line);border-radius:6px;padding:9px 10px;
@@ -162,6 +164,7 @@
         </div>
         <input type="file" id="file" multiple accept=".pcap,.pcapng,.cap,.log,.csv,.tsv,.txt,.json,.gz" style="display:none">
         <input type="file" id="dir" webkitdirectory directory multiple style="display:none">
+        <div id="srcbox" hidden></div>
       </div>
 
       <div class="grp">
@@ -757,6 +760,7 @@
   // ===================== 繪製 =====================
   let state={nodes:[],edges:[],focus:"",transform:{k:1,x:0,y:0}};
   let rafId=null,alpha=0,stepFn=null,currentRaw=[];
+  let srcNote="";                     // 這張圖是從哪些檔畫出來的,顯示在側欄並存進工作階段
   // 基準線:記住「設為基準」當下有哪些 IP 與哪些 src→dst 配對,之後用來找新增
   let baseline=null;   // {ips:Set, pairs:Set, at:Date, n:節點數, e:連線數}
 
@@ -1158,7 +1162,7 @@
       savedAt:new Date().toISOString(),
       focus:$("focus").value, hop:$("hop").value, thresh:$("thresh").value,
       sizeBy:$("sizeBy").value, labels:$("labels").checked, rings:$("rings").checked,
-      assets:$("assets").value, threat:$("threat").value,
+      assets:$("assets").value, threat:$("threat").value, srcNote,
       edges:currentRaw.map(e=>({s:e.src,d:e.dst,w:e.w,p:e.pk||0,l:e.label||""}))
     };
     const d=new Date(), pad=n=>String(n).padStart(2,"0");
@@ -1190,12 +1194,16 @@
     if(typeof j.labels==="boolean") $("labels").checked=j.labels;
     if(typeof j.rings==="boolean")  $("rings").checked=j.rings;
     syncHop();
+    setSrc(j.srcNote||"已存的工作階段");   // 舊版存檔沒這欄,不能沿用上一批的來源
     const when=j.savedAt?new Date(j.savedAt).toLocaleString():"";
     status(`已還原工作階段${when?" ("+when+")":""}：${fmt(currentRaw.length)} 條連線`);
     render();
   }
 
   function status(msg,err){const s=$("status");s.textContent=msg||"";s.className=err?"err":"";}
+  // 用 textContent 不用 innerHTML:檔名是外來字串,不該當 HTML 解讀
+  function setSrc(t){ srcNote=t||""; const b=$("srcbox");
+    b.textContent=srcNote?("資料來源:"+srcNote):""; b.hidden=!srcNote; }
 
   // 用瀏覽器原生 DecompressionStream 解 gzip (零依賴)
   async function gunzip(buf){
@@ -1229,6 +1237,7 @@
       }catch(e){}
     }
     const agg=new Map(); let okCount=0,failCount=0,rows=0,pkts=0;
+    const okNames=[];
     const t0=performance.now();
     for(let i=0;i<files.length;i++){
       const f=files[i];
@@ -1241,6 +1250,7 @@
         if(isPcapBuf(buf)){ const pr=parsePcap(buf); edges=pr.edges; pkts+=pr.pkts; }
         else{ edges=parseAny(new TextDecoder("utf-8",{fatal:false}).decode(buf)); }
         if(!edges||!edges.length){ failCount++; continue; }
+        okNames.push(f.name);
         for(const e of edges){
           rows++;
           const k=e.src+"\u0000"+e.dst;
@@ -1253,6 +1263,8 @@
       }catch(err){ failCount++; }
     }
     if(!agg.size){ status("沒有解析到任何連線資料 (檔案格式不符?)",true); return; }
+    setSrc(okNames.length>6 ? okNames.slice(0,6).join("、")+" …另 "+(okNames.length-6)+" 個"
+                            : okNames.join("、"));
     currentRaw=[...agg.values()].map(o=>({src:o.src,dst:o.dst,w:o.w,pk:o.pk,label:[...o.labels].join(", ")}));
     const ms=Math.round(performance.now()-t0);
     let msg=`${okCount} 個檔案 · ${fmt(rows)} 筆紀錄 → ${fmt(currentRaw.length)} 條連線 (${ms}ms)`;
@@ -1326,11 +1338,13 @@
   $("dclose").addEventListener("click",closeDetail);
   window.addEventListener("keydown",ev=>{ if(ev.key==="Escape"&&selNode) closeDetail(); });
   $("renderPaste").addEventListener("click",()=>{ currentRaw=parseAny($("data").value)||[];
+    setSrc(currentRaw.length?"貼上的資料":"");
     status(`已解析：${currentRaw.length} 條連線`); render(); });
   $("sample").addEventListener("click",()=>{
     $("data").value=SAMPLE; $("assets").value=SAMPLE_ASSETS; $("threat").value="45.140.17.3";
     $("focus").value="10.20.0.5"; $("hop").value="1"; syncHop();
-    currentRaw=parseAny(SAMPLE)||[]; status(`範例：${currentRaw.length} 條連線`); render(); });
+    currentRaw=parseAny(SAMPLE)||[]; setSrc("內建範例資料");
+    status(`範例：${currentRaw.length} 條連線`); render(); });
   $("fit").addEventListener("click",fit);
   // 清空連線圖以便重新匯入;刻意保留資產表、威脅情資與各項設定,不必重新輸入
   $("clear").addEventListener("click",()=>{
@@ -1339,7 +1353,7 @@
     stepFn=null; alpha=0;
     state.nodes=[]; state.edges=[]; state.transform={k:1,x:0,y:0};
     $("data").value="";
-    baseline=null;
+    baseline=null; setSrc("");
     draw(); updateStats(null);
     status("已清空連線圖與基準,資產表與威脅情資保留。可直接拖入新檔或貼上資料重新匯入。");
   });
@@ -1385,7 +1399,7 @@
 
   if(typeof module!=="undefined"&&module.exports){
     module.exports={parseCSV,parseESJson,parseJsonLines,parseAny,parseSession,parseAssets,parseThreat,parsePcap,gunzip,isGzip,isPcapBuf,
-      buildGraph,hopFilter,nodesFromEdges,applyThreshold,annotate,ipClass,layout};
+      buildGraph,hopFilter,nodesFromEdges,applyThreshold,annotate,ipClass,layout,setSrc};
   }
 })();
 </script>
