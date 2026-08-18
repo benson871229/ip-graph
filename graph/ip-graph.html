@@ -10,7 +10,7 @@
     --text:#cdd8e8; --muted:#7f8fa6;
     --focus:#f0b24a; --internal:#46b7c9; --external:#e46f56; --other:#8a93a6;
     --rogue:#d76ad7; --threat:#ff4d4d; --edge:#38486a; --edgehi:#86b4e6;
-    --fresh:#3fd68a;
+    --fresh:#3fd68a; --mcast:#6b7a99;
     --mono:ui-monospace,"Cascadia Code","Consolas","SF Mono",Menlo,monospace;
     --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans TC",sans-serif;
   }
@@ -235,6 +235,7 @@
       <div class="item"><span class="dot" style="background:var(--focus)"></span>聚焦 IP (0 跳)</div>
       <div class="item"><span class="dot" style="background:var(--internal)"></span>內部私有 IP</div>
       <div class="item"><span class="dot" style="background:var(--external)"></span>外部公有 IP</div>
+      <div class="item"><span class="dot" style="background:var(--mcast)"></span>多播/廣播 (LLMNR、mDNS、SSDP)</div>
       <div class="item"><span class="dot ring"></span>不在資產表</div>
       <div class="item"><span class="dot" style="background:var(--threat)"></span>命中威脅情資</div>
       <div class="item"><span class="dot" style="background:var(--fresh)"></span>基準沒有的新節點/新流量</div>
@@ -315,11 +316,15 @@
     if(a===172&&b>=16&&b<=31) return "internal";
     if(a===192&&b===168) return "internal";
     if(a===127||(a===169&&b===254)) return "internal";
+    // 224.0.0.0/4 多播與 240.0.0.0/4(含 255.255.255.255 廣播)不是「對外連線」,
+    // 是同網段的廣播。LLMNR 224.0.0.252、mDNS 224.0.0.251、SSDP 239.255.255.250 都在這裡,
+    // 歸進 external 會讓一堆正常的本地廣播看起來像連到公有 IP。
+    if(a>=224) return "mcast";
     return "external";
   }
-  const COLOR={focus:"#f0b24a",internal:"#46b7c9",external:"#e46f56",other:"#8a93a6"};
+  const COLOR={focus:"#f0b24a",internal:"#46b7c9",external:"#e46f56",mcast:"#6b7a99",other:"#8a93a6"};
   const fmt=n=>{n=Math.round(n);return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g,",");};
-  const clsName=c=>({focus:"聚焦",internal:"內部",external:"外部",other:"其他"}[c]||c);
+  const clsName=c=>({focus:"聚焦",internal:"內部",external:"外部",mcast:"多播/廣播",other:"其他"}[c]||c);
   const esc=s=>String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
 
   function splitLine(line){const out=[];let cur="",q=false;
