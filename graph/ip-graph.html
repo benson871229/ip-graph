@@ -204,7 +204,7 @@
         <summary>資產盤點表 (選填)</summary>
         <div class="inner">
           <div class="tinynote">每行 ip,名稱,角色。節點改顯示名稱；不在表內的 IP 會被虛線圈標記。</div>
-          <textarea id="assets" spellcheck="false" placeholder="10.20.0.5,PACS-01,影像伺服器"></textarea>
+          <textarea id="assets" spellcheck="false" placeholder="10.20.0.5,SRV-FILE-01,檔案伺服器"></textarea>
         </div>
       </details>
 
@@ -220,7 +220,7 @@
         <summary>改用貼上資料</summary>
         <div class="inner">
           <div class="tinynote">支援 來源,目的,權重,標籤 / Kibana CSV / Zeek conn.log / ES 聚合 JSON。</div>
-          <textarea id="data" spellcheck="false" placeholder="10.20.0.30,10.20.0.5,1240,DICOM"></textarea>
+          <textarea id="data" spellcheck="false" placeholder="10.20.0.30,10.20.0.5,1240,SMB"></textarea>
           <div class="btns" style="margin-top:8px">
             <button id="renderPaste">用貼上資料繪製</button>
             <button id="sample">載入範例</button>
@@ -281,31 +281,31 @@
   const NS="http://www.w3.org/2000/svg";
 
   const SAMPLE=
-`# 範例：聚焦 PACS(10.20.0.5) 可看出 1 跳/2 跳/3 跳的差別
-10.20.0.11,10.20.0.5,486000,DICOM
-10.20.0.12,10.20.0.5,512000,DICOM
-10.20.0.30,10.20.0.5,124000,DICOM
-10.20.0.5,10.20.0.30,398000,DICOM
-10.20.0.199,10.20.0.5,88000,DICOM
-10.20.0.30,10.20.0.6,42000,HL7
+`# 範例：聚焦檔案伺服器(10.20.0.5) 可看出 1 跳/2 跳/3 跳的差別
+10.20.0.11,10.20.0.5,486000,SMB
+10.20.0.12,10.20.0.5,512000,SMB
+10.20.0.30,10.20.0.5,124000,SMB
+10.20.0.5,10.20.0.30,398000,SMB
+10.20.0.199,10.20.0.5,88000,SMB
+10.20.0.30,10.20.0.6,42000,HTTPS
 10.20.0.30,10.20.0.10,9000,Kerberos
-10.20.0.6,10.20.0.20,31000,HL7
+10.20.0.6,10.20.0.20,31000,HTTPS
 10.20.0.10,10.20.0.1,4200,DNS
 10.20.0.20,10.20.0.41,15000,SQL
 10.20.0.1,8.8.8.8,1200,DNS
 10.20.0.199,45.140.17.3,150000,HTTPS
-10.20.0.31,10.20.0.6,15000,HL7
+10.20.0.31,10.20.0.6,15000,HTTPS
 10.20.0.31,140.82.0.5,54000,HTTPS`;
   const SAMPLE_ASSETS=
-`10.20.0.5,PACS-01,影像伺服器
-10.20.0.6,HL7-ENGINE,介接引擎
+`10.20.0.5,SRV-FILE-01,檔案伺服器
+10.20.0.6,SRV-APP-01,應用伺服器
 10.20.0.10,DC-01,網域控制站
 10.20.0.1,DNS-01,DNS
-10.20.0.11,CT-01,CT 造影
-10.20.0.12,MRI-01,MRI 造影
-10.20.0.20,LIS-01,檢驗系統
-10.20.0.30,WS-放射科,工作站
-10.20.0.31,WS-門診,工作站
+10.20.0.11,DEV-01,專屬設備
+10.20.0.12,DEV-02,專屬設備
+10.20.0.20,SRV-APP-02,應用伺服器
+10.20.0.30,WS-01,工作站
+10.20.0.31,WS-02,工作站
 10.20.0.41,DB-01,資料庫`;
 
   // ===================== 基礎 =====================
@@ -487,7 +487,7 @@
     .map(s=>s.trim().split(/[\s,]/)[0]).filter(x=>x&&x[0]!=="#"));
 
   // ===================== pcap / pcapng =====================
-  // 服務對照表:要新增就直接加「埠號:"名稱"」。不限醫療場域,涵蓋常見企業服務。
+  // 服務對照表:要新增就直接加「埠號:"名稱"」。涵蓋常見企業、OT 與資安產品服務。
   const PORTSVC={
     // --- 基本網路 / 網際網路 ---
     20:"FTP-Data",21:"FTP",22:"SSH",23:"Telnet",25:"SMTP",37:"Time",42:"WINS",43:"WHOIS",
@@ -515,8 +515,6 @@
     1719:"H.323",1720:"H.323",3478:"STUN/TURN",5060:"SIP",5061:"SIP-TLS",
     // --- 訊息佇列 / IoT ---
     1883:"MQTT",5672:"AMQP",8883:"MQTT-TLS",9092:"Kafka",61616:"ActiveMQ",
-    // --- 醫療 ---
-    104:"DICOM",2575:"HL7",2761:"DICOM",2762:"DICOM-TLS",6661:"HL7",11112:"DICOM",
     // --- OT / ICS ---
     502:"Modbus",789:"RedLion",1911:"Niagara-Fox",2222:"EtherNet/IP-IO",2404:"IEC-104",
     4911:"Niagara-Fox-TLS",9600:"Omron-FINS",20000:"DNP3",44818:"EtherNet/IP",47808:"BACnet",
@@ -534,7 +532,7 @@
     // --- 其他 ---
     6881:"BitTorrent",8291:"MikroTik-Winbox"
   };
-  // 醫療網路裡出現在不該出現的路徑上就值得看的服務
+  // 出現在不該出現的路徑上就值得看的服務
   const RISKY=new Set([21,22,23,69,135,137,138,139,445,512,513,514,1337,3389,4444,5555,
     5800,5900,5901,5902,5938,5985,5986,6666,6667,9001,12345,31337,47001]);
   // 標籤一律「埠號 服務名」;查不到就「埠號 unknown」,非標準 port 才不會消失
@@ -565,7 +563,7 @@
       return ICMPTYPE[t] ? ("ICMP "+t+" "+ICMPTYPE[t]) : ("ICMP type "+t);
     }
     const valid=p>0&&p<=65535;
-    if(valid&&PORTSVC[p]) return portLabel(p);          // 104 DICOM
+    if(valid&&PORTSVC[p]) return portLabel(p);          // 445 SMB
     if(valid&&nm&&nm!=="-") return p+" "+nm;            // 8291 winbox
     if(valid) return portLabel(p);                       // 8291 unknown
     return (nm&&nm!=="-")?nm:"";                         // 只有服務名可用

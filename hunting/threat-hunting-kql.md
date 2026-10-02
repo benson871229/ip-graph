@@ -1,6 +1,6 @@
 # Threat Hunting KQL 手冊(Security Onion / Kibana)
 
-給醫療網路 SOC 用的獵捕查詢集。每一條都說明**這是在找什麼**、**怎麼判讀**、**誤報從哪來**。
+給 SOC 用的獵捕查詢集。每一條都說明**這是在找什麼**、**怎麼判讀**、**誤報從哪來**。
 
 貼進 **Kibana → Discover** 的查詢列(或 SO 的 Hunt 介面)即可。語法為 **KQL**,
 不是 Lucene —— Kibana 查詢列右側可切換,請確認是 KQL 模式。
@@ -66,7 +66,7 @@ event.dataset:conn and source.ip:10.0.0.0/8 and not destination.ip:10.0.0.0/8
     and not destination.ip:(172.16.0.0/12 or 192.168.0.0/16)
 ```
 
-**用途**:醫療設備原則上不該直接對外。這條會直接列出所有違反的。
+**用途**:內部設備原則上不該直接對外。這條會直接列出所有違反的。
 **誤報**:更新伺服器、NTP、DNS forwarder 是正常的,先建立白名單。
 
 ---
@@ -115,7 +115,7 @@ event.dataset:conn and network.transport:icmp
 
 ---
 
-## C. 橫向移動(醫療網路的重點)
+## C. 橫向移動
 
 ### C1. SMB 橫向
 
@@ -143,7 +143,7 @@ event.dataset:conn and destination.port:3389 and destination.ip:10.0.0.0/8
 event.dataset:conn and destination.port:(5985 or 5986)
 ```
 
-**用途**:無檔案攻擊常用。**在醫療網路裡通常極少見**,一出現就值得查。
+**用途**:無檔案攻擊常用。**在多數內網裡通常極少見**,一出現就值得查。
 
 ### C4. 管理協定從不該有的地方發起
 
@@ -215,7 +215,7 @@ event.dataset:ssl and ssl.validation_status:*self*signed*
 ```
 
 **用途**:C2 伺服器大量使用自簽憑證。
-**誤報**:內部設備(印表機、IPMI、醫療設備管理介面)常是自簽 → **限定目的為外部 IP** 可大幅降噪:
+**誤報**:內部設備(印表機、IPMI、設備管理介面)常是自簽 → **限定目的為外部 IP** 可大幅降噪:
 ```
 event.dataset:ssl and ssl.validation_status:*self*signed* and not destination.ip:10.0.0.0/8
 ```
@@ -250,7 +250,7 @@ event.dataset:conn and source.ip:10.0.0.0/8 and not destination.ip:10.0.0.0/8
     and source.bytes > 104857600
 ```
 
-**用途**:單一連線送出超過 100 MB。醫療影像外流會非常明顯。
+**用途**:單一連線送出超過 100 MB。大檔外流會非常明顯。
 **判讀**:重點是**出多於入**。備份/更新是入多於出。
 
 ### E2. DNS 隧道:過長的查詢
@@ -278,68 +278,13 @@ event.dataset:dns and dns.response_code:NXDOMAIN
 event.dataset:dns and dns.question.name:(*.top or *.xyz or *.tk or *.ml or *.cf or *.gq or *.buzz)
 ```
 
-**用途**:這些 TLD 在正常醫療業務裡幾乎不會出現,但惡意基礎設施大量使用。
+**用途**:這些 TLD 在正常業務裡幾乎不會出現,但惡意基礎設施大量使用。
 
 ---
 
-## F. 醫療場域專屬(你的差異化)
+## F. 惡意檔案與 Web
 
-> 這幾條是一般 SOC 手冊不會有的,針對 DICOM / HL7 / FHIR。
-
-### F1. 明文 DICOM(含病患影像)
-
-```
-event.dataset:conn and destination.port:(104 or 11112)
-```
-
-**用途**:104 / 11112 是**未加密** DICOM,2762 才是 DICOM-TLS。
-想反過來確認「有多少是加密的」,查 `destination.port:2762` 比較兩者數量。
-**這本身就是一個 finding** —— 病患影像在網路上明文傳輸,是合規問題。
-**注意**:這是**現況盤點**,不是攻擊偵測。先盤出來,再談改善。
-
-### F2. 明文 HL7(含病歷資料)
-
-```
-event.dataset:conn and destination.port:(2575 or 6661)
-```
-
-**用途**:HL7 v2 預設明文,內含 PID(病患識別)段。
-**隱私原則**:**只看有沒有這條流量,不要去解析內容**。知道「哪裡有明文 PHI」就夠了。
-
-### F3. 醫療設備對外連線
-
-```
-event.dataset:conn and source.ip:(10.20.0.11 or 10.20.0.12 or 10.20.0.5)
-    and not destination.ip:10.0.0.0/8
-```
-
-**用途**:把來源換成你資產表裡的 **modality / PACS**。
-這些設備**不該直接連網際網路**。一有命中就是高優先事件(可能是被入侵,或廠商遠端維護未報備)。
-
-### F4. 非 PACS 的主機存取 DICOM
-
-```
-event.dataset:conn and destination.port:(104 or 11112) and not source.ip:(10.20.0.11 or 10.20.0.12)
-```
-
-**用途**:把來源白名單換成你**合法的 modality 清單**。
-白名單外的主機在存取 DICOM = 未授權存取病患影像。
-
-### F5. 醫療設備上出現 IT 協定
-
-```
-event.dataset:conn and destination.ip:(10.20.0.11 or 10.20.0.12)
-    and destination.port:(22 or 23 or 445 or 3389 or 5985)
-```
-
-**用途**:CT/MRI 這種設備上出現 SSH/SMB/RDP,幾乎都不是正常臨床行為。
-**這是我最推薦的一條** —— 醫療設備行為極固定,誤報很低。
-
----
-
-## G. 惡意檔案與 Web
-
-### G1. 可執行檔下載
+### F1. 可執行檔下載
 
 ```
 event.dataset:file and file.mime_type:(*executable* or *msdownload* or *octet-stream*)
@@ -347,7 +292,7 @@ event.dataset:file and file.mime_type:(*executable* or *msdownload* or *octet-st
 
 **用途**:找從網路下載的 EXE/DLL。
 
-### G2. 可疑 User-Agent
+### F2. 可疑 User-Agent
 
 ```
 event.dataset:http and user_agent.original:(*curl* or *wget* or *python* or *powershell* or *Go-http*)
@@ -356,7 +301,7 @@ event.dataset:http and user_agent.original:(*curl* or *wget* or *python* or *pow
 **用途**:正常使用者用瀏覽器。這些 UA 出現在**工作站**上通常是腳本或惡意程式。
 **誤報**:伺服器上的自動化作業是正常的 → 限定來源為工作站網段。
 
-### G3. 直接用 IP 連 HTTP(沒有域名)
+### F3. 直接用 IP 連 HTTP(沒有域名)
 
 ```
 event.dataset:http and http.virtual_host:(0* or 1* or 2* or 3* or 4* or 5* or 6* or 7* or 8* or 9*)
@@ -369,14 +314,14 @@ event.dataset:http and http.virtual_host:(0* or 1* or 2* or 3* or 4* or 5* or 6*
 
 ---
 
-## H. 自動化
+## G. 自動化
 
-### H1. 能不能在 Kibana 裡排程?
+### G1. 能不能在 Kibana 裡排程?
 
 **不能。** SO 預設是 **Elastic Basic 授權,沒有 Alerting / Watcher**(那是付費功能)。
 你的 Kibana 也因此沒有 Graph app。所以「在 Kibana 裡設排程告警」這條路是**封死的**。
 
-### H2. 可行的自動化路徑
+### G2. 可行的自動化路徑
 
 | 方式 | 可行性 | 說明 |
 |---|---|---|
@@ -385,9 +330,9 @@ event.dataset:http and http.virtual_host:(0* or 1* or 2* or 3* or 4* or 5* or 6*
 | 自寫腳本打 ES `_search` | ✅ | 需要 9200 存取權;本 repo 不附腳本,見下方注意事項 |
 | ElastAlert2 | ⚠️ | 要另外部署服務,你的環境不一定允許 |
 
-### H3. 推薦做法:把穩定的獵捕變成 Sigma 規則
+### G3. 推薦做法:把穩定的獵捕變成 Sigma 規則
 
-本手冊裡**誤報低、可用筆數門檻判斷**的那幾條(見 H4),最適合的歸宿不是排程腳本,
+本手冊裡**誤報低、可用筆數門檻判斷**的那幾條(見 G4),最適合的歸宿不是排程腳本,
 而是寫成 **Sigma 規則**交給 SO 的 Detections 管理 —— 它本來就會持續比對,
 命中就進 Alerts,不必另外維護排程與報表。
 
@@ -401,10 +346,10 @@ event.dataset:http and http.virtual_host:(0* or 1* or 2* or 3* or 4* or 5* or 6*
 2. **查詢改寫**:本手冊是 KQL(Kibana 用)。打 ES `_search` 要放進
    `query_string` 並開 `analyze_wildcard`,或改寫成 DSL。
 
-### H4. 哪些適合自動化、哪些不適合
+### G4. 哪些適合自動化、哪些不適合
 
 **適合排程**(結果是「有/沒有」,可直接告警):
-- D2 高嚴重度告警、D7 惡意用埠、F3 醫療設備對外、F5 設備上的 IT 協定
+- D2 高嚴重度告警、D7 惡意用埠、D5 對外的自簽憑證
 - B3 失敗連線暴增、E1 大量出站
 
 **不適合排程**(需要人看分布、判斷脈絡):
@@ -417,7 +362,7 @@ event.dataset:http and http.virtual_host:(0* or 1* or 2* or 3* or 4* or 5* or 6*
 
 ---
 
-## I. 與 ip-graph 的搭配
+## H. 與 ip-graph 的搭配
 
 ```
 Kibana 跑 KQL 找到可疑主機
