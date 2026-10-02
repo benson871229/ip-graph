@@ -11,6 +11,7 @@ PowerShell 腳本用 Windows 內建的就能跑。適合受管制或 air-gapped 
 | **`assets/`** | 資產盤點:從防火牆設定擷取 IP↔設備名稱,並合併進既有 Excel 資產表 |
 | **`hunting/`** | `threat-hunting-kql.md` — Security Onion / Kibana 的威脅獵捕 KQL 手冊 |
 | **`intel/`** | `malicious-ip.txt` — 高信度惡意 IP 清單,供關聯圖標記威脅 |
+| **`demo/`** | 示範資料:不用真實 log 就能看出關聯圖在做什麼 |
 
 ---
 
