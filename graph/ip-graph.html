@@ -10,7 +10,7 @@
     --text:#cdd8e8; --muted:#7f8fa6;
     --focus:#f0b24a; --internal:#46b7c9; --external:#e46f56; --other:#8a93a6;
     --rogue:#d76ad7; --threat:#ff4d4d; --edge:#38486a; --edgehi:#86b4e6;
-    --fresh:#3fd68a;
+    --fresh:#3fd68a; --mcast:#6b7a99;
     --mono:ui-monospace,"Cascadia Code","Consolas","SF Mono",Menlo,monospace;
     --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans TC",sans-serif;
   }
@@ -38,6 +38,8 @@
   #drop #pickFiles:hover b,#drop #pickDir:hover b{text-decoration:underline}
   #drop .big{font-size:13px;color:var(--text);margin-bottom:3px}
   #drop .fmt{font-size:10.5px;font-family:var(--mono);margin-top:5px;opacity:.75}
+  #srcbox{margin-top:8px;padding:7px 9px;border:1px solid var(--line);border-radius:6px;
+    background:var(--panel2);font:11px/1.6 var(--mono);color:var(--muted);word-break:break-all}
 
   textarea{width:100%;resize:vertical;background:var(--bg);color:var(--text);
     border:1px solid var(--line);border-radius:6px;padding:9px 10px;
@@ -162,6 +164,7 @@
         </div>
         <input type="file" id="file" multiple accept=".pcap,.pcapng,.cap,.log,.csv,.tsv,.txt,.json,.gz" style="display:none">
         <input type="file" id="dir" webkitdirectory directory multiple style="display:none">
+        <div id="srcbox" hidden></div>
       </div>
 
       <div class="grp">
@@ -201,7 +204,7 @@
         <summary>資產盤點表 (選填)</summary>
         <div class="inner">
           <div class="tinynote">每行 ip,名稱,角色。節點改顯示名稱；不在表內的 IP 會被虛線圈標記。</div>
-          <textarea id="assets" spellcheck="false" placeholder="10.20.0.5,PACS-01,影像伺服器"></textarea>
+          <textarea id="assets" spellcheck="false" placeholder="10.20.0.5,SRV-FILE-01,檔案伺服器"></textarea>
         </div>
       </details>
 
@@ -217,7 +220,7 @@
         <summary>改用貼上資料</summary>
         <div class="inner">
           <div class="tinynote">支援 來源,目的,權重,標籤 / Kibana CSV / Zeek conn.log / ES 聚合 JSON。</div>
-          <textarea id="data" spellcheck="false" placeholder="10.20.0.30,10.20.0.5,1240,DICOM"></textarea>
+          <textarea id="data" spellcheck="false" placeholder="10.20.0.30,10.20.0.5,1240,SMB"></textarea>
           <div class="btns" style="margin-top:8px">
             <button id="renderPaste">用貼上資料繪製</button>
             <button id="sample">載入範例</button>
@@ -232,6 +235,7 @@
       <div class="item"><span class="dot" style="background:var(--focus)"></span>聚焦 IP (0 跳)</div>
       <div class="item"><span class="dot" style="background:var(--internal)"></span>內部私有 IP</div>
       <div class="item"><span class="dot" style="background:var(--external)"></span>外部公有 IP</div>
+      <div class="item"><span class="dot" style="background:var(--mcast)"></span>多播/廣播 (LLMNR、mDNS、SSDP)</div>
       <div class="item"><span class="dot ring"></span>不在資產表</div>
       <div class="item"><span class="dot" style="background:var(--threat)"></span>命中威脅情資</div>
       <div class="item"><span class="dot" style="background:var(--fresh)"></span>基準沒有的新節點/新流量</div>
@@ -277,31 +281,31 @@
   const NS="http://www.w3.org/2000/svg";
 
   const SAMPLE=
-`# 範例：聚焦 PACS(10.20.0.5) 可看出 1 跳/2 跳/3 跳的差別
-10.20.0.11,10.20.0.5,486000,DICOM
-10.20.0.12,10.20.0.5,512000,DICOM
-10.20.0.30,10.20.0.5,124000,DICOM
-10.20.0.5,10.20.0.30,398000,DICOM
-10.20.0.199,10.20.0.5,88000,DICOM
-10.20.0.30,10.20.0.6,42000,HL7
+`# 範例：聚焦檔案伺服器(10.20.0.5) 可看出 1 跳/2 跳/3 跳的差別
+10.20.0.11,10.20.0.5,486000,SMB
+10.20.0.12,10.20.0.5,512000,SMB
+10.20.0.30,10.20.0.5,124000,SMB
+10.20.0.5,10.20.0.30,398000,SMB
+10.20.0.199,10.20.0.5,88000,SMB
+10.20.0.30,10.20.0.6,42000,HTTPS
 10.20.0.30,10.20.0.10,9000,Kerberos
-10.20.0.6,10.20.0.20,31000,HL7
+10.20.0.6,10.20.0.20,31000,HTTPS
 10.20.0.10,10.20.0.1,4200,DNS
 10.20.0.20,10.20.0.41,15000,SQL
 10.20.0.1,8.8.8.8,1200,DNS
 10.20.0.199,45.140.17.3,150000,HTTPS
-10.20.0.31,10.20.0.6,15000,HL7
+10.20.0.31,10.20.0.6,15000,HTTPS
 10.20.0.31,140.82.0.5,54000,HTTPS`;
   const SAMPLE_ASSETS=
-`10.20.0.5,PACS-01,影像伺服器
-10.20.0.6,HL7-ENGINE,介接引擎
+`10.20.0.5,SRV-FILE-01,檔案伺服器
+10.20.0.6,SRV-APP-01,應用伺服器
 10.20.0.10,DC-01,網域控制站
 10.20.0.1,DNS-01,DNS
-10.20.0.11,CT-01,CT 造影
-10.20.0.12,MRI-01,MRI 造影
-10.20.0.20,LIS-01,檢驗系統
-10.20.0.30,WS-放射科,工作站
-10.20.0.31,WS-門診,工作站
+10.20.0.11,DEV-01,專屬設備
+10.20.0.12,DEV-02,專屬設備
+10.20.0.20,SRV-APP-02,應用伺服器
+10.20.0.30,WS-01,工作站
+10.20.0.31,WS-02,工作站
 10.20.0.41,DB-01,資料庫`;
 
   // ===================== 基礎 =====================
@@ -312,11 +316,15 @@
     if(a===172&&b>=16&&b<=31) return "internal";
     if(a===192&&b===168) return "internal";
     if(a===127||(a===169&&b===254)) return "internal";
+    // 224.0.0.0/4 多播與 240.0.0.0/4(含 255.255.255.255 廣播)不是「對外連線」,
+    // 是同網段的廣播。LLMNR 224.0.0.252、mDNS 224.0.0.251、SSDP 239.255.255.250 都在這裡,
+    // 歸進 external 會讓一堆正常的本地廣播看起來像連到公有 IP。
+    if(a>=224) return "mcast";
     return "external";
   }
-  const COLOR={focus:"#f0b24a",internal:"#46b7c9",external:"#e46f56",other:"#8a93a6"};
+  const COLOR={focus:"#f0b24a",internal:"#46b7c9",external:"#e46f56",mcast:"#6b7a99",other:"#8a93a6"};
   const fmt=n=>{n=Math.round(n);return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g,",");};
-  const clsName=c=>({focus:"聚焦",internal:"內部",external:"外部",other:"其他"}[c]||c);
+  const clsName=c=>({focus:"聚焦",internal:"內部",external:"外部",mcast:"多播/廣播",other:"其他"}[c]||c);
   const esc=s=>String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
 
   function splitLine(line){const out=[];let cur="",q=false;
@@ -479,7 +487,7 @@
     .map(s=>s.trim().split(/[\s,]/)[0]).filter(x=>x&&x[0]!=="#"));
 
   // ===================== pcap / pcapng =====================
-  // 服務對照表:要新增就直接加「埠號:"名稱"」。不限醫療場域,涵蓋常見企業服務。
+  // 服務對照表:要新增就直接加「埠號:"名稱"」。涵蓋常見企業、OT 與資安產品服務。
   const PORTSVC={
     // --- 基本網路 / 網際網路 ---
     20:"FTP-Data",21:"FTP",22:"SSH",23:"Telnet",25:"SMTP",37:"Time",42:"WINS",43:"WHOIS",
@@ -507,8 +515,6 @@
     1719:"H.323",1720:"H.323",3478:"STUN/TURN",5060:"SIP",5061:"SIP-TLS",
     // --- 訊息佇列 / IoT ---
     1883:"MQTT",5672:"AMQP",8883:"MQTT-TLS",9092:"Kafka",61616:"ActiveMQ",
-    // --- 醫療 ---
-    104:"DICOM",2575:"HL7",2761:"DICOM",2762:"DICOM-TLS",6661:"HL7",11112:"DICOM",
     // --- OT / ICS ---
     502:"Modbus",789:"RedLion",1911:"Niagara-Fox",2222:"EtherNet/IP-IO",2404:"IEC-104",
     4911:"Niagara-Fox-TLS",9600:"Omron-FINS",20000:"DNP3",44818:"EtherNet/IP",47808:"BACnet",
@@ -526,7 +532,7 @@
     // --- 其他 ---
     6881:"BitTorrent",8291:"MikroTik-Winbox"
   };
-  // 醫療網路裡出現在不該出現的路徑上就值得看的服務
+  // 出現在不該出現的路徑上就值得看的服務
   const RISKY=new Set([21,22,23,69,135,137,138,139,445,512,513,514,1337,3389,4444,5555,
     5800,5900,5901,5902,5938,5985,5986,6666,6667,9001,12345,31337,47001]);
   // 標籤一律「埠號 服務名」;查不到就「埠號 unknown」,非標準 port 才不會消失
@@ -557,7 +563,7 @@
       return ICMPTYPE[t] ? ("ICMP "+t+" "+ICMPTYPE[t]) : ("ICMP type "+t);
     }
     const valid=p>0&&p<=65535;
-    if(valid&&PORTSVC[p]) return portLabel(p);          // 104 DICOM
+    if(valid&&PORTSVC[p]) return portLabel(p);          // 445 SMB
     if(valid&&nm&&nm!=="-") return p+" "+nm;            // 8291 winbox
     if(valid) return portLabel(p);                       // 8291 unknown
     return (nm&&nm!=="-")?nm:"";                         // 只有服務名可用
@@ -757,6 +763,7 @@
   // ===================== 繪製 =====================
   let state={nodes:[],edges:[],focus:"",transform:{k:1,x:0,y:0}};
   let rafId=null,alpha=0,stepFn=null,currentRaw=[];
+  let srcNote="";                     // 這張圖是從哪些檔畫出來的,顯示在側欄並存進工作階段
   // 基準線:記住「設為基準」當下有哪些 IP 與哪些 src→dst 配對,之後用來找新增
   let baseline=null;   // {ips:Set, pairs:Set, at:Date, n:節點數, e:連線數}
 
@@ -1158,7 +1165,7 @@
       savedAt:new Date().toISOString(),
       focus:$("focus").value, hop:$("hop").value, thresh:$("thresh").value,
       sizeBy:$("sizeBy").value, labels:$("labels").checked, rings:$("rings").checked,
-      assets:$("assets").value, threat:$("threat").value,
+      assets:$("assets").value, threat:$("threat").value, srcNote,
       edges:currentRaw.map(e=>({s:e.src,d:e.dst,w:e.w,p:e.pk||0,l:e.label||""}))
     };
     const d=new Date(), pad=n=>String(n).padStart(2,"0");
@@ -1190,12 +1197,16 @@
     if(typeof j.labels==="boolean") $("labels").checked=j.labels;
     if(typeof j.rings==="boolean")  $("rings").checked=j.rings;
     syncHop();
+    setSrc(j.srcNote||"已存的工作階段");   // 舊版存檔沒這欄,不能沿用上一批的來源
     const when=j.savedAt?new Date(j.savedAt).toLocaleString():"";
     status(`已還原工作階段${when?" ("+when+")":""}：${fmt(currentRaw.length)} 條連線`);
     render();
   }
 
   function status(msg,err){const s=$("status");s.textContent=msg||"";s.className=err?"err":"";}
+  // 用 textContent 不用 innerHTML:檔名是外來字串,不該當 HTML 解讀
+  function setSrc(t){ srcNote=t||""; const b=$("srcbox");
+    b.textContent=srcNote?("資料來源:"+srcNote):""; b.hidden=!srcNote; }
 
   // 用瀏覽器原生 DecompressionStream 解 gzip (零依賴)
   async function gunzip(buf){
@@ -1229,6 +1240,7 @@
       }catch(e){}
     }
     const agg=new Map(); let okCount=0,failCount=0,rows=0,pkts=0;
+    const okNames=[];
     const t0=performance.now();
     for(let i=0;i<files.length;i++){
       const f=files[i];
@@ -1241,6 +1253,7 @@
         if(isPcapBuf(buf)){ const pr=parsePcap(buf); edges=pr.edges; pkts+=pr.pkts; }
         else{ edges=parseAny(new TextDecoder("utf-8",{fatal:false}).decode(buf)); }
         if(!edges||!edges.length){ failCount++; continue; }
+        okNames.push(f.name);
         for(const e of edges){
           rows++;
           const k=e.src+"\u0000"+e.dst;
@@ -1253,6 +1266,8 @@
       }catch(err){ failCount++; }
     }
     if(!agg.size){ status("沒有解析到任何連線資料 (檔案格式不符?)",true); return; }
+    setSrc(okNames.length>6 ? okNames.slice(0,6).join("、")+" …另 "+(okNames.length-6)+" 個"
+                            : okNames.join("、"));
     currentRaw=[...agg.values()].map(o=>({src:o.src,dst:o.dst,w:o.w,pk:o.pk,label:[...o.labels].join(", ")}));
     const ms=Math.round(performance.now()-t0);
     let msg=`${okCount} 個檔案 · ${fmt(rows)} 筆紀錄 → ${fmt(currentRaw.length)} 條連線 (${ms}ms)`;
@@ -1326,11 +1341,13 @@
   $("dclose").addEventListener("click",closeDetail);
   window.addEventListener("keydown",ev=>{ if(ev.key==="Escape"&&selNode) closeDetail(); });
   $("renderPaste").addEventListener("click",()=>{ currentRaw=parseAny($("data").value)||[];
+    setSrc(currentRaw.length?"貼上的資料":"");
     status(`已解析：${currentRaw.length} 條連線`); render(); });
   $("sample").addEventListener("click",()=>{
     $("data").value=SAMPLE; $("assets").value=SAMPLE_ASSETS; $("threat").value="45.140.17.3";
     $("focus").value="10.20.0.5"; $("hop").value="1"; syncHop();
-    currentRaw=parseAny(SAMPLE)||[]; status(`範例：${currentRaw.length} 條連線`); render(); });
+    currentRaw=parseAny(SAMPLE)||[]; setSrc("內建範例資料");
+    status(`範例：${currentRaw.length} 條連線`); render(); });
   $("fit").addEventListener("click",fit);
   // 清空連線圖以便重新匯入;刻意保留資產表、威脅情資與各項設定,不必重新輸入
   $("clear").addEventListener("click",()=>{
@@ -1339,7 +1356,7 @@
     stepFn=null; alpha=0;
     state.nodes=[]; state.edges=[]; state.transform={k:1,x:0,y:0};
     $("data").value="";
-    baseline=null;
+    baseline=null; setSrc("");
     draw(); updateStats(null);
     status("已清空連線圖與基準,資產表與威脅情資保留。可直接拖入新檔或貼上資料重新匯入。");
   });
@@ -1385,7 +1402,7 @@
 
   if(typeof module!=="undefined"&&module.exports){
     module.exports={parseCSV,parseESJson,parseJsonLines,parseAny,parseSession,parseAssets,parseThreat,parsePcap,gunzip,isGzip,isPcapBuf,
-      buildGraph,hopFilter,nodesFromEdges,applyThreshold,annotate,ipClass,layout};
+      buildGraph,hopFilter,nodesFromEdges,applyThreshold,annotate,ipClass,layout,setSrc};
   }
 })();
 </script>
